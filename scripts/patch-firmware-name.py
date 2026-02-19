@@ -15,16 +15,56 @@ Examples:
 
 Naming:
     Original             → Patched (device 1)
-    NPG-LITE             → NPG-LI-1E
     NPG-Lite-6CH:A3:F1   → NPG-Li-1-6CH:A3:F1
     NPG-Lite-3CH:A3:F1   → NPG-Li-1-3CH:A3:F1
 
-    The number replaces "te" with "-N" in the BLE advertised names,
-    keeping the total byte count identical (1 padding byte consumed).
+The script also recalculates the ESP32 image checksum and SHA256 hash
+so the bootloader accepts the patched firmware.
 """
 
+import hashlib
+import struct
 import sys
 import os
+
+
+def recalculate_esp32_checksum_and_hash(data: bytearray) -> None:
+    """Recalculate the ESP32 image checksum byte and SHA256 hash in-place."""
+
+    if data[0] != 0xE9:
+        print("  Warning: not a valid ESP32 image (magic != 0xE9), skipping checksum fix")
+        return
+
+    seg_count = data[1]
+    hash_appended = data[23]
+
+    # Parse segments to find the end of segment data
+    offset = 24  # after 24-byte extended header
+    xor_sum = 0xEF  # initial seed per ESP-IDF spec
+
+    for s in range(seg_count):
+        if offset + 8 > len(data):
+            break
+        seg_len = struct.unpack_from("<I", data, offset + 4)[0]
+        for i in range(offset + 8, offset + 8 + seg_len):
+            xor_sum ^= data[i]
+        offset += 8 + seg_len
+
+    # Checksum byte sits at the 16-byte-aligned boundary after segments
+    checksum_offset = ((offset + 16) // 16) * 16 - 1
+    old_checksum = data[checksum_offset]
+    data[checksum_offset] = xor_sum
+    print(f"  Checksum: 0x{old_checksum:02x} → 0x{xor_sum:02x}  (offset 0x{checksum_offset:06x})")
+
+    # If hash is appended, recalculate SHA256 over everything before the hash
+    if hash_appended == 1:
+        hash_offset = checksum_offset + 1
+        hash_data = data[:hash_offset]
+        new_hash = hashlib.sha256(hash_data).digest()
+        old_hash = bytes(data[hash_offset : hash_offset + 32])
+        data[hash_offset : hash_offset + 32] = new_hash
+        print(f"  SHA256:   {old_hash.hex()[:16]}...")
+        print(f"         → {new_hash.hex()[:16]}...  (offset 0x{hash_offset:06x})")
 
 
 def patch_firmware(input_path: str, number: str, output_path: str) -> None:
@@ -35,23 +75,15 @@ def patch_firmware(input_path: str, number: str, output_path: str) -> None:
         print(f"Error: number must be a single digit (0-9), got '{number}'")
         sys.exit(1)
 
-    # The three name strings in the firmware binary and their byte layout:
+    # BLE advertised name format strings in the firmware binary:
     #
-    # 0x148: "NPG-LITE\0"                  + 3 padding bytes → room for +3 chars
-    # 0x17C: "NPG-Lite-6CH:%02X:%02X\0"    + 1 padding byte  → room for +1 char
-    # 0x194: "NPG-Lite-3CH:%02X:%02X\0"    + 1 padding byte  → room for +1 char
+    # 0x17C: "NPG-Lite-6CH:%02X:%02X\0"  + 1 padding byte → room for +1 char
+    # 0x194: "NPG-Lite-3CH:%02X:%02X\0"  + 1 padding byte → room for +1 char
     #
-    # Strategy: "NPG-Lite" (8 chars) → "NPG-Li-N" (8 chars, same length)
-    # but we insert a hyphen before the next segment, consuming the padding byte:
-    #   "NPG-Lite-3CH:..."  (22 chars) → "NPG-Li-N-3CH:..." (23 chars, +1 = uses padding)
+    # We only patch the BLE name format strings, not the internal "NPG-LITE"
+    # service identifier (which may be used for protocol-level matching).
 
     patches = [
-        # (search_bytes, replacement_bytes, description)
-        (
-            b"NPG-LITE\x00",
-            f"NPG-LI-{number}E\x00".encode(),
-            f"NPG-LITE → NPG-LI-{number}E",
-        ),
         (
             b"NPG-Lite-6CH:%02X:%02X\x00",
             f"NPG-Li-{number}-6CH:%02X:%02X\x00".encode(),
@@ -85,6 +117,10 @@ def patch_firmware(input_path: str, number: str, output_path: str) -> None:
     if patched_count == 0:
         print("\nError: no strings were patched. Is this the correct firmware file?")
         sys.exit(1)
+
+    # Fix the ESP32 image checksum and SHA256 hash
+    print()
+    recalculate_esp32_checksum_and_hash(data)
 
     with open(output_path, "wb") as f:
         f.write(data)
