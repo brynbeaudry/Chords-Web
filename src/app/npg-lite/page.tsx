@@ -41,7 +41,8 @@ import {
     Eye,
     BicepsFlexed,
     Settings,
-    Loader
+    Loader,
+    Terminal
 } from "lucide-react";
 import { lightThemeColors, darkThemeColors, getCustomColor } from '@/components/Colors';
 import { useTheme } from "next-themes";
@@ -99,6 +100,7 @@ const NPG_Ble = () => {
         pauseRef.current = newPauseState;
     };
     const samplesReceivedRef = useRef(0);
+    const consoleLogRef = useRef<boolean>(false);
     const createCanvasElements = () => {
         const container = canvasContainerRef.current;
         if (!container) {
@@ -383,6 +385,10 @@ const NPG_Ble = () => {
         }
 
         updatePlots(channelData, zoomRef.current);
+
+        if (consoleLogRef.current) {
+            console.log(`[Sample #${channelData[0]}] CH1: ${channelData[1]?.toFixed(2)}, CH2: ${channelData[2]?.toFixed(2)}, CH3: ${channelData[3]?.toFixed(2)}`);
+        }
 
         if (isRecordingRef.current) {
             const channeldatavalues = channelData
@@ -1548,6 +1554,23 @@ const NPG_Ble = () => {
                             </TooltipProvider>
                         </PopoverContent>
                     </Popover>
+                    {/* Console Log Toggle */}
+                    <TooltipProvider>
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    className={`rounded-xl ${consoleLogRef.current ? "bg-green-700 hover:bg-green-600 text-white" : ""}`}
+                                    onClick={() => { consoleLogRef.current = !consoleLogRef.current; forceUpdate(); }}
+                                    disabled={isConnected == false}
+                                >
+                                    <Terminal size={16} />
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                                <p>{consoleLogRef.current ? "Disable Console Log" : "Enable Console Log"}</p>
+                            </TooltipContent>
+                        </Tooltip>
+                    </TooltipProvider>
                 </div>
             </div>
         </div>
