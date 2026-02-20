@@ -45,6 +45,7 @@ import {
     Wifi,
     WifiOff,
     Terminal,
+    Activity,
 } from "lucide-react";
 import { lightThemeColors, darkThemeColors, getCustomColor } from '@/components/Colors';
 import { useTheme } from "next-themes";
@@ -84,6 +85,21 @@ const DualStream = () => {
     const pauseRef = useRef<boolean>(true);
     const canvasElementCountRef = useRef<number>(1);
     const consoleLogRef = useRef<boolean>(false);
+
+    // Live data readout — refs hold latest values, state updates throttled to ~15Hz
+    const d1LatestRef = useRef<{ filtered: number[]; raw: number[]; counter: number }>({ filtered: [0, 0, 0], raw: [0, 0, 0], counter: 0 });
+    const d2LatestRef = useRef<{ filtered: number[]; raw: number[]; counter: number }>({ filtered: [0, 0, 0], raw: [0, 0, 0], counter: 0 });
+    const [d1Live, setD1Live] = useState<{ filtered: number[]; raw: number[]; counter: number }>({ filtered: [0, 0, 0], raw: [0, 0, 0], counter: 0 });
+    const [d2Live, setD2Live] = useState<{ filtered: number[]; raw: number[]; counter: number }>({ filtered: [0, 0, 0], raw: [0, 0, 0], counter: 0 });
+    const [showLiveData, setShowLiveData] = useState(true);
+
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setD1Live({ ...d1LatestRef.current });
+            setD2Live({ ...d2LatestRef.current });
+        }, 66); // ~15Hz UI refresh
+        return () => clearInterval(interval);
+    }, []);
 
     const togglePause = () => {
         const newPauseState = !isDisplay;
@@ -446,6 +462,14 @@ const DualStream = () => {
         }
 
         updateDevicePlots(slot, channelDataRef.current, zoomRef.current);
+
+        // Store latest values for live readout
+        const latestRef = slot === 1 ? d1LatestRef : d2LatestRef;
+        latestRef.current = {
+            filtered: channelDataRef.current.slice(1),
+            raw: rawChannels,
+            counter: sampleCounter,
+        };
 
         if (consoleLogRef.current) {
             const d = channelDataRef.current;
@@ -961,6 +985,18 @@ const DualStream = () => {
                             )}
                         </div>
                     </div>
+                    {showLiveData && isD1Connected && (
+                        <div className="px-2 py-1 border-b text-xs font-mono flex gap-3 bg-black/5 dark:bg-white/5">
+                            <span className="text-gray-500">#{d1Live.counter}</span>
+                            {d1Live.filtered.map((v, i) => (
+                                <span key={i}>
+                                    <span className="text-gray-400">CH{i + 1}</span>{' '}
+                                    <span className="font-semibold">{v.toFixed(3)}</span>{' '}
+                                    <span className="text-gray-500">({d1Live.raw[i]})</span>
+                                </span>
+                            ))}
+                        </div>
+                    )}
                     <div ref={d1ContainerRef} className="flex-1 relative" />
                 </div>
 
@@ -992,6 +1028,18 @@ const DualStream = () => {
                             )}
                         </div>
                     </div>
+                    {showLiveData && isD2Connected && (
+                        <div className="px-2 py-1 border-b text-xs font-mono flex gap-3 bg-black/5 dark:bg-white/5">
+                            <span className="text-gray-500">#{d2Live.counter}</span>
+                            {d2Live.filtered.map((v, i) => (
+                                <span key={i}>
+                                    <span className="text-gray-400">CH{i + 1}</span>{' '}
+                                    <span className="font-semibold">{v.toFixed(3)}</span>{' '}
+                                    <span className="text-gray-500">({d2Live.raw[i]})</span>
+                                </span>
+                            ))}
+                        </div>
+                    )}
                     <div ref={d2ContainerRef} className="flex-1 relative" />
                 </div>
             </div>
@@ -1350,6 +1398,24 @@ const DualStream = () => {
                             </TooltipTrigger>
                             <TooltipContent>
                                 <p>{consoleLogRef.current ? "Disable Console Log" : "Enable Console Log"}</p>
+                            </TooltipContent>
+                        </Tooltip>
+                    </TooltipProvider>
+
+                    {/* Live Data Toggle */}
+                    <TooltipProvider>
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    className={`rounded-xl ${showLiveData ? "bg-green-700 hover:bg-green-600 text-white" : ""}`}
+                                    onClick={() => setShowLiveData(prev => !prev)}
+                                    disabled={!isAnyConnected}
+                                >
+                                    <Activity size={16} />
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                                <p>{showLiveData ? "Hide Live Data" : "Show Live Data"}</p>
                             </TooltipContent>
                         </Tooltip>
                     </TooltipProvider>
