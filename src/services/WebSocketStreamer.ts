@@ -13,6 +13,8 @@ export class WebSocketStreamer {
   private device2Filtered: number[] = [0, 0, 0];
   private device1Raw: number[] = [0, 0, 0];
   private device2Raw: number[] = [0, 0, 0];
+  private device1Bands: { [band: string]: number[] } = {};
+  private device2Bands: { [band: string]: number[] } = {};
 
   connect(name: string, url: string): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -74,12 +76,20 @@ export class WebSocketStreamer {
     this.device2Raw = channels;
   }
 
+  setDevice1BandData(band: string, channels: number[]): void {
+    this.device1Bands[band] = channels;
+  }
+
+  setDevice2BandData(band: string, channels: number[]): void {
+    this.device2Bands[band] = channels;
+  }
+
   sendFiltered(socketName: string): void {
     const conn = this.sockets.get(socketName);
     if (!conn?.isConnected) return;
     if (conn.socket.bufferedAmount > BACKPRESSURE_LIMIT) return;
 
-    const message = {
+    const message: Record<string, number> = {
       ts: performance.now(),
       d1_ch0: this.device1Filtered[0] ?? 0,
       d1_ch1: this.device1Filtered[1] ?? 0,
@@ -88,6 +98,17 @@ export class WebSocketStreamer {
       d2_ch1: this.device2Filtered[1] ?? 0,
       d2_ch2: this.device2Filtered[2] ?? 0,
     };
+
+    for (const [band, channels] of Object.entries(this.device1Bands)) {
+      channels.forEach((val, i) => {
+        if (val !== 0) message[`d1_ch${i}_${band}`] = val;
+      });
+    }
+    for (const [band, channels] of Object.entries(this.device2Bands)) {
+      channels.forEach((val, i) => {
+        if (val !== 0) message[`d2_ch${i}_${band}`] = val;
+      });
+    }
 
     conn.socket.send(JSON.stringify(message));
   }

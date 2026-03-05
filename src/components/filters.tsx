@@ -206,6 +206,124 @@ export class EXGFilter {
     }
 }
 
+export type BandType = 'alpha' | 'theta' | 'delta';
+
+export class BandpassFilter {
+    // Highpass biquad state
+    private hpZ1 = 0;
+    private hpZ2 = 0;
+    private hpX1 = 0;
+    // Lowpass biquad state
+    private lpZ1 = 0;
+    private lpZ2 = 0;
+    private lpX1 = 0;
+
+    private band: BandType;
+    private samplingRate = 0;
+
+    constructor(band: BandType) {
+        this.band = band;
+    }
+
+    setSamplingRate(rate: number): void {
+        if (this.samplingRate !== rate) {
+            this.hpZ1 = this.hpZ2 = this.hpX1 = 0;
+            this.lpZ1 = this.lpZ2 = this.lpX1 = 0;
+        }
+        this.samplingRate = rate;
+    }
+
+    process(input: number): number {
+        let output = input;
+
+        // ── Highpass stage (band-specific lower cutoff) ──
+        switch (this.band) {
+            case 'alpha': // HP 8Hz
+                switch (this.samplingRate) {
+                    case 250:
+                        this.hpX1 = output - (-1.71721183 * this.hpZ1) - (0.75251618 * this.hpZ2);
+                        output = (0.86743200 * this.hpX1) + (-1.73486401 * this.hpZ1) + (0.86743200 * this.hpZ2);
+                        break;
+                    case 500:
+                        this.hpX1 = output - (-1.85804330 * this.hpZ1) - (0.86747213 * this.hpZ2);
+                        output = (0.93137886 * this.hpX1) + (-1.86275772 * this.hpZ1) + (0.93137886 * this.hpZ2);
+                        break;
+                }
+                break;
+            case 'theta': // HP 4Hz
+                switch (this.samplingRate) {
+                    case 250:
+                        this.hpX1 = output - (-1.85804330 * this.hpZ1) - (0.86747213 * this.hpZ2);
+                        output = (0.93137886 * this.hpX1) + (-1.86275772 * this.hpZ1) + (0.93137886 * this.hpZ2);
+                        break;
+                    case 500:
+                        this.hpX1 = output - (-1.92894226 * this.hpZ1) - (0.93138168 * this.hpZ2);
+                        output = (0.96508099 * this.hpX1) + (-1.93016197 * this.hpZ1) + (0.96508099 * this.hpZ2);
+                        break;
+                }
+                break;
+            case 'delta': // HP 1Hz
+                switch (this.samplingRate) {
+                    case 250:
+                        this.hpX1 = output - (-1.96446058 * this.hpZ1) - (0.96508117 * this.hpZ2);
+                        output = (0.98238544 * this.hpX1) + (-1.96477088 * this.hpZ1) + (0.98238544 * this.hpZ2);
+                        break;
+                    case 500:
+                        this.hpX1 = output - (-1.98222893 * this.hpZ1) - (0.98238545 * this.hpZ2);
+                        output = (0.99115360 * this.hpX1) + (-1.98230719 * this.hpZ1) + (0.99115360 * this.hpZ2);
+                        break;
+                }
+                break;
+        }
+        this.hpZ2 = this.hpZ1;
+        this.hpZ1 = this.hpX1;
+
+        // ── Lowpass stage (band-specific upper cutoff) ──
+        switch (this.band) {
+            case 'alpha': // LP 12Hz
+                switch (this.samplingRate) {
+                    case 250:
+                        this.lpX1 = output - (-1.57823618 * this.lpZ1) - (0.65283776 * this.lpZ2);
+                        output = (0.01865040 * this.lpX1) + (0.03730079 * this.lpZ1) + (0.01865040 * this.lpZ2);
+                        break;
+                    case 500:
+                        this.lpX1 = output - (-1.78743252 * this.lpZ1) - (0.80794959 * this.lpZ2);
+                        output = (0.00512927 * this.lpX1) + (0.01025854 * this.lpZ1) + (0.00512927 * this.lpZ2);
+                        break;
+                }
+                break;
+            case 'theta': // LP 7.5Hz
+                switch (this.samplingRate) {
+                    case 250:
+                        this.lpX1 = output - (-1.73472577 * this.lpZ1) - (0.76600660 * this.lpZ2);
+                        output = (0.00782021 * this.lpX1) + (0.01564042 * this.lpZ1) + (0.00782021 * this.lpZ2);
+                        break;
+                    case 500:
+                        this.lpX1 = output - (-1.86689228 * this.lpZ1) - (0.87521455 * this.lpZ2);
+                        output = (0.00208057 * this.lpX1) + (0.00416113 * this.lpZ1) + (0.00208057 * this.lpZ2);
+                        break;
+                }
+                break;
+            case 'delta': // LP 4Hz
+                switch (this.samplingRate) {
+                    case 250:
+                        this.lpX1 = output - (-1.85804330 * this.lpZ1) - (0.86747213 * this.lpZ2);
+                        output = (0.00235721 * this.lpX1) + (0.00471442 * this.lpZ1) + (0.00235721 * this.lpZ2);
+                        break;
+                    case 500:
+                        this.lpX1 = output - (-1.92894226 * this.lpZ1) - (0.93138168 * this.lpZ2);
+                        output = (0.00060985 * this.lpX1) + (0.00121971 * this.lpZ1) + (0.00060985 * this.lpZ2);
+                        break;
+                }
+                break;
+        }
+        this.lpZ2 = this.lpZ1;
+        this.lpZ1 = this.lpX1;
+
+        return output;
+    }
+}
+
 export class Notch {
     // Properties to hold the state of the filter sections
     private z1_1: number;

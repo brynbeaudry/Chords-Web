@@ -11,7 +11,7 @@ import { saveAs } from "file-saver";
 import { WebglPlot, ColorRGBA, WebglLine } from "webgl-plot";
 import Navbar from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
-import { EXGFilter, Notch, HighPassFilter } from '@/components/filters';
+import { EXGFilter, Notch, HighPassFilter, BandpassFilter, BandType } from '@/components/filters';
 import {
     Popover,
     PopoverContent,
@@ -87,16 +87,23 @@ const DualStream = () => {
     const consoleLogRef = useRef<boolean>(false);
 
     // Live data readout — refs hold latest values, state updates throttled to ~15Hz
-    const d1LatestRef = useRef<{ filtered: number[]; raw: number[]; counter: number }>({ filtered: [0, 0, 0], raw: [0, 0, 0], counter: 0 });
-    const d2LatestRef = useRef<{ filtered: number[]; raw: number[]; counter: number }>({ filtered: [0, 0, 0], raw: [0, 0, 0], counter: 0 });
-    const [d1Live, setD1Live] = useState<{ filtered: number[]; raw: number[]; counter: number }>({ filtered: [0, 0, 0], raw: [0, 0, 0], counter: 0 });
-    const [d2Live, setD2Live] = useState<{ filtered: number[]; raw: number[]; counter: number }>({ filtered: [0, 0, 0], raw: [0, 0, 0], counter: 0 });
+    interface LiveData {
+        filtered: number[];
+        raw: number[];
+        counter: number;
+        bands: { [band: string]: number[] };
+    }
+    const emptyLive: LiveData = { filtered: [0, 0, 0], raw: [0, 0, 0], counter: 0, bands: {} };
+    const d1LatestRef = useRef<LiveData>({ ...emptyLive });
+    const d2LatestRef = useRef<LiveData>({ ...emptyLive });
+    const [d1Live, setD1Live] = useState<LiveData>({ ...emptyLive });
+    const [d2Live, setD2Live] = useState<LiveData>({ ...emptyLive });
     const [showLiveData, setShowLiveData] = useState(true);
 
     useEffect(() => {
         const interval = setInterval(() => {
-            setD1Live({ ...d1LatestRef.current });
-            setD2Live({ ...d2LatestRef.current });
+            setD1Live({ ...d1LatestRef.current, bands: { ...d1BandDataRef.current } });
+            setD2Live({ ...d2LatestRef.current, bands: { ...d2BandDataRef.current } });
         }, 66); // ~15Hz UI refresh
         return () => clearInterval(interval);
     }, []);
@@ -168,6 +175,33 @@ const DualStream = () => {
     const d2AppliedFiltersRef = useRef<{ [key: number]: number }>({});
     const d2AppliedEXGFiltersRef = useRef<{ [key: number]: number }>({});
 
+    // ─── Band filter state ──────────────────────────────────────────
+    const d1BandFiltersRef = useRef<Map<BandType, BandpassFilter[]>>(new Map([
+        ['alpha', Array.from({ length: 3 }, () => new BandpassFilter('alpha'))],
+        ['theta', Array.from({ length: 3 }, () => new BandpassFilter('theta'))],
+        ['delta', Array.from({ length: 3 }, () => new BandpassFilter('delta'))],
+    ]));
+    const d2BandFiltersRef = useRef<Map<BandType, BandpassFilter[]>>(new Map([
+        ['alpha', Array.from({ length: 3 }, () => new BandpassFilter('alpha'))],
+        ['theta', Array.from({ length: 3 }, () => new BandpassFilter('theta'))],
+        ['delta', Array.from({ length: 3 }, () => new BandpassFilter('delta'))],
+    ]));
+    const d1EnabledBandsRef = useRef<{ [channel: number]: Set<BandType> }>({});
+    const d2EnabledBandsRef = useRef<{ [channel: number]: Set<BandType> }>({});
+    const d1BandGainRef = useRef<{ [channel: number]: number }>({});
+    const d2BandGainRef = useRef<{ [channel: number]: number }>({});
+    const d1BandDataRef = useRef<{ [band: string]: number[] }>({});
+    const d2BandDataRef = useRef<{ [band: string]: number[] }>({});
+    const d1BandLinesRef = useRef<Record<BandType, WebglLine>[]>([]);
+    const d2BandLinesRef = useRef<Record<BandType, WebglLine>[]>([]);
+    const [isBandPopoverOpen, setIsBandPopoverOpen] = useState(false);
+
+    const BAND_COLORS: Record<BandType, string> = {
+        alpha: '#00FFFF',
+        theta: '#FF8800',
+        delta: '#FF00FF',
+    };
+
     // ─── WebSocket / TouchDesigner state ────────────────────────────
     const streamerRef = useRef<WebSocketStreamer | null>(null);
     const [isTDConnected, setIsTDConnected] = useState(false);
@@ -187,6 +221,14 @@ const DualStream = () => {
     d2NotchFiltersRef.current.forEach((f) => f.setbits(samplingrateref.current));
     d2ExgFiltersRef.current.forEach((f) => f.setbits("12", samplingrateref.current));
     d2HighPassFiltersRef.current.forEach((f) => f.setSamplingRate(samplingrateref.current));
+
+    // Band filter sampling rate init
+    for (const filters of d1BandFiltersRef.current.values()) {
+        filters.forEach((f) => f.setSamplingRate(samplingrateref.current));
+    }
+    for (const filters of d2BandFiltersRef.current.values()) {
+        filters.forEach((f) => f.setSamplingRate(samplingrateref.current));
+    }
 
     // ─── Zoom / timeBase refs ───────────────────────────────────────
     const zoomRef = useRef(Zoom);
@@ -249,6 +291,110 @@ const DualStream = () => {
         forceUpdate();
     };
 
+    // ─── Band toggle / gain helpers ─────────────────────────────────
+    // Lazily create a WebGL band line for a specific channel+band
+    const ensureBandLine = (band: BandType, channelIndex: number) => {
+        const channelNumber = channelIndex + 1;
+        for (const slot of [1, 2] as const) {
+            const plots = slot === 1 ? d1WglPlots : d2WglPlots;
+            const bandLinesArr = slot === 1 ? d1BandLinesRef : d2BandLinesRef;
+            const selIdx = selectedChannelsRef.current.indexOf(channelNumber);
+            if (selIdx < 0 || selIdx >= plots.length) continue;
+            const bandMap = bandLinesArr.current[selIdx];
+            if (!bandMap || bandMap[band]) continue; // already exists
+            const wglp = plots[selIdx];
+            if (!wglp) continue;
+            const dpCount = dataPointCountRef.current;
+            const bLine = new WebglLine(BAND_LINE_COLORS[band], dpCount);
+            bLine.offsetY = 0;
+            bLine.lineSpaceX(-1, 2 / dpCount);
+            // Initialize all points to NaN so the line is invisible until data flows
+            for (let p = 0; p < dpCount; p++) bLine.setY(p, NaN);
+            wglp.addLine(bLine);
+            bandMap[band] = bLine;
+        }
+    };
+
+    const toggleBand = (channelIndex: number, band: BandType) => {
+        for (const ref of [d1EnabledBandsRef, d2EnabledBandsRef]) {
+            if (!ref.current[channelIndex]) ref.current[channelIndex] = new Set();
+            if (ref.current[channelIndex].has(band)) {
+                ref.current[channelIndex].delete(band);
+            } else {
+                ref.current[channelIndex].add(band);
+            }
+        }
+        // Ensure the WebGL line exists when enabling
+        if (d1EnabledBandsRef.current[channelIndex]?.has(band)) {
+            ensureBandLine(band, channelIndex);
+        }
+        updateLegends();
+        forceUpdate();
+    };
+
+    const toggleBandAllChannels = (band: BandType) => {
+        const allHave = Array.from({ length: numChannels }, (_, i) => i).every(
+            (i) => d1EnabledBandsRef.current[i]?.has(band)
+        );
+        for (const ref of [d1EnabledBandsRef, d2EnabledBandsRef]) {
+            for (let i = 0; i < numChannels; i++) {
+                if (!ref.current[i]) ref.current[i] = new Set();
+                if (allHave) {
+                    ref.current[i].delete(band);
+                } else {
+                    ref.current[i].add(band);
+                }
+            }
+        }
+        // Ensure WebGL lines exist when enabling
+        if (!allHave) {
+            for (let i = 0; i < numChannels; i++) {
+                ensureBandLine(band, i);
+            }
+        }
+        updateLegends();
+        forceUpdate();
+    };
+
+    const setBandGain = (channelIndex: number, gain: number) => {
+        d1BandGainRef.current[channelIndex] = gain;
+        d2BandGainRef.current[channelIndex] = gain;
+        forceUpdate();
+    };
+
+    const allHaveBand = (band: BandType) =>
+        Array.from({ length: numChannels }, (_, i) => i).every(
+            (i) => d1EnabledBandsRef.current[i]?.has(band)
+        );
+
+    const updateLegends = () => {
+        for (const slot of [1, 2] as const) {
+            const enabledRef = slot === 1 ? d1EnabledBandsRef : d2EnabledBandsRef;
+            selectedChannels.forEach((channelNumber) => {
+                const legend = document.getElementById(`legend-d${slot}-ch${channelNumber}`);
+                if (!legend) return;
+                legend.innerHTML = '';
+                const enabled = enabledRef.current[channelNumber - 1];
+                if (!enabled) return;
+                for (const band of ['alpha', 'theta', 'delta'] as BandType[]) {
+                    if (enabled.has(band)) {
+                        const span = document.createElement('span');
+                        span.className = 'flex items-center gap-1';
+                        span.innerHTML = `<span style="color:${BAND_COLORS[band]}">●</span>${band.charAt(0).toUpperCase() + band.slice(1)}`;
+                        legend.appendChild(span);
+                    }
+                }
+            });
+        }
+    };
+
+    // ─── Band line colors (shared by canvas creation + lazy creation) ──
+    const BAND_LINE_COLORS: Record<BandType, ColorRGBA> = {
+        alpha: new ColorRGBA(0, 1, 1, 1),
+        theta: new ColorRGBA(1, 0.53, 0, 1),
+        delta: new ColorRGBA(1, 0, 1, 1),
+    };
+
     // ─── Canvas creation ────────────────────────────────────────────
     const getLineColor = (channelNumber: number, t: string | undefined): ColorRGBA => {
         const index = channelNumber - 1;
@@ -268,6 +414,7 @@ const DualStream = () => {
         const setPlots = slot === 1 ? setD1WglPlots : setD2WglPlots;
         const setCanvases = slot === 1 ? setD1CanvasElements : setD2CanvasElements;
         const linesRef = slot === 1 ? d1LinesRef : d2LinesRef;
+        const bandLinesRef = slot === 1 ? d1BandLinesRef : d2BandLinesRef;
         const sweepPos = slot === 1 ? d1SweepPositions : d2SweepPositions;
         const curSweepPos = slot === 1 ? d1CurrentSweepPos : d2CurrentSweepPos;
 
@@ -296,6 +443,7 @@ const DualStream = () => {
         setCanvases([]);
         setPlots([]);
         linesRef.current = [];
+        bandLinesRef.current = [];
 
         const newCanvasElements: HTMLCanvasElement[] = [];
         const newWglPlots: WebglPlot[] = [];
@@ -347,7 +495,12 @@ const DualStream = () => {
             badge.className = "absolute text-gray-500 text-sm rounded-full p-2 m-2";
             badge.innerText = `CH${channelNumber}`;
 
+            const legend = document.createElement("div");
+            legend.className = "absolute top-1 right-8 flex gap-2 text-xs z-10";
+            legend.id = `legend-d${slot}-ch${channelNumber}`;
+
             wrapper.appendChild(badge);
+            wrapper.appendChild(legend);
             wrapper.appendChild(canvas);
             container.appendChild(wrapper);
 
@@ -363,9 +516,33 @@ const DualStream = () => {
 
             wglp.addLine(line);
             newLines.push(line);
+
+            // Placeholder for band lines — created lazily when enabled
+            bandLinesRef.current.push({} as Record<BandType, WebglLine>);
         });
 
         linesRef.current = newLines;
+
+        // Re-create band lines for any currently-enabled bands
+        const enabledRef = slot === 1 ? d1EnabledBandsRef : d2EnabledBandsRef;
+        selectedChannels.forEach((channelNumber, selIdx) => {
+            const channelIdx = channelNumber - 1;
+            const enabled = enabledRef.current[channelIdx];
+            if (!enabled || enabled.size === 0) return;
+            const wglp = newWglPlots[selIdx];
+            if (!wglp) return;
+            const bandMap = bandLinesRef.current[selIdx];
+            if (!bandMap) return;
+            for (const band of enabled) {
+                const bLine = new WebglLine(BAND_LINE_COLORS[band], dpCount);
+                bLine.offsetY = 0;
+                bLine.lineSpaceX(-1, 2 / dpCount);
+                for (let p = 0; p < dpCount; p++) bLine.setY(p, NaN);
+                wglp.addLine(bLine);
+                bandMap[band] = bLine;
+            }
+        });
+
         setCanvases(newCanvasElements);
         setPlots(newWglPlots);
     };
@@ -375,6 +552,10 @@ const DualStream = () => {
         (slot: 1 | 2, data: number[], zoom: number) => {
             const plots = slot === 1 ? d1WglPlots : d2WglPlots;
             const lines = slot === 1 ? d1LinesRef : d2LinesRef;
+            const bandLinesArr = slot === 1 ? d1BandLinesRef : d2BandLinesRef;
+            const enabledBandsRef = slot === 1 ? d1EnabledBandsRef : d2EnabledBandsRef;
+            const bandDataRef = slot === 1 ? d1BandDataRef : d2BandDataRef;
+            const bandGainRef = slot === 1 ? d1BandGainRef : d2BandGainRef;
             const sweepPos = slot === 1 ? d1SweepPositions : d2SweepPositions;
             const setLoading = slot === 1 ? setIsD1Loading : setIsD2Loading;
             const setConnected = slot === 1 ? setIsD1Connected : setIsD2Connected;
@@ -410,6 +591,24 @@ const DualStream = () => {
                 const clearPosition = Math.ceil((currentPos + dataPointCountRef.current / 100) % line.numPoints);
                 try { line.setY(clearPosition, NaN); } catch (e) { /* noop */ }
 
+                // Band overlay lines — only iterate enabled bands
+                const channelIdx = channelNumber - 1;
+                const enabledBands = enabledBandsRef.current[channelIdx];
+                if (enabledBands && enabledBands.size > 0) {
+                    const gain = bandGainRef.current[channelIdx] ?? 3.0;
+                    const bandLines = bandLinesArr.current[i];
+                    if (bandLines) {
+                        for (const band of enabledBands) {
+                            const bLine = bandLines[band];
+                            if (bLine) {
+                                const val = bandDataRef.current[band]?.[channelIdx] ?? 0;
+                                bLine.setY(currentPos, val * gain);
+                                bLine.setY(clearPosition, NaN);
+                            }
+                        }
+                    }
+                }
+
                 sweepPos.current[i] = (currentPos + 1) % line.numPoints;
             });
         },
@@ -427,6 +626,9 @@ const DualStream = () => {
         const highPassFilters = slot === 1 ? d1HighPassFiltersRef : d2HighPassFiltersRef;
         const appliedEXG = slot === 1 ? d1AppliedEXGFiltersRef : d2AppliedEXGFiltersRef;
         const appliedNotch = slot === 1 ? d1AppliedFiltersRef : d2AppliedFiltersRef;
+        const bandFiltersMap = slot === 1 ? d1BandFiltersRef : d2BandFiltersRef;
+        const enabledBandsRef = slot === 1 ? d1EnabledBandsRef : d2EnabledBandsRef;
+        const bandDataRef = slot === 1 ? d1BandDataRef : d2BandDataRef;
         const samplesReceived = slot === 1 ? d1SamplesReceivedRef : d2SamplesReceivedRef;
         const activeBufferIdx = slot === 1 ? d1ActiveBufferIndex : d2ActiveBufferIndex;
         const fillingIdx = slot === 1 ? d1FillingIndex : d2FillingIndex;
@@ -447,18 +649,31 @@ const DualStream = () => {
         channelDataRef.current = [sampleCounter];
         const rawChannels: number[] = [];
 
+        const ADC_Y_SCALE = 2 / 4096; // 12-bit ADC scaling (matches EXGFilter.yScale)
+
         for (let channel = 0; channel < numChannels; channel++) {
             const sample = dataView.getInt16(1 + (channel * 2), false);
             rawChannels.push(sample);
-            channelDataRef.current.push(
-                notchFilters.current[channel].process(
-                    exgFilters.current[channel].process(
-                        highPassFilters.current[channel].process(sample),
-                        appliedEXG.current[channel]
-                    ),
-                    appliedNotch.current[channel]
-                )
+            const hpOutput = highPassFilters.current[channel].process(sample);
+            const filteredValue = notchFilters.current[channel].process(
+                exgFilters.current[channel].process(
+                    hpOutput,
+                    appliedEXG.current[channel]
+                ),
+                appliedNotch.current[channel]
             );
+            channelDataRef.current.push(filteredValue);
+
+            // Band filtering — feed HP-filtered signal (before EXG yScale)
+            const enabledBands = enabledBandsRef.current[channel];
+            if (enabledBands && enabledBands.size > 0) {
+                for (const band of enabledBands) {
+                    const filter = bandFiltersMap.current.get(band)![channel];
+                    const bandValue = filter.process(hpOutput) * ADC_Y_SCALE;
+                    if (!bandDataRef.current[band]) bandDataRef.current[band] = [0, 0, 0];
+                    bandDataRef.current[band][channel] = bandValue;
+                }
+            }
         }
 
         updateDevicePlots(slot, channelDataRef.current, zoomRef.current);
@@ -469,6 +684,7 @@ const DualStream = () => {
             filtered: channelDataRef.current.slice(1),
             raw: rawChannels,
             counter: sampleCounter,
+            bands: latestRef.current.bands, // bands updated separately via bandDataRef
         };
 
         if (consoleLogRef.current) {
@@ -487,6 +703,15 @@ const DualStream = () => {
                 streamerRef.current.setDevice2Raw(rawChannels);
             }
             streamerRef.current.sendFiltered('touchdesigner');
+
+            // Send band data
+            for (const band of ['alpha', 'theta', 'delta']) {
+                const vals = bandDataRef.current[band];
+                if (vals) {
+                    if (slot === 1) streamerRef.current.setDevice1BandData(band, vals);
+                    else streamerRef.current.setDevice2BandData(band, vals);
+                }
+            }
         }
 
         // Recording
@@ -986,15 +1211,44 @@ const DualStream = () => {
                         </div>
                     </div>
                     {showLiveData && isD1Connected && (
-                        <div className="px-2 py-1 border-b text-xs font-mono flex gap-3 bg-black/5 dark:bg-white/5">
-                            <span className="text-gray-500">#{d1Live.counter}</span>
-                            {d1Live.filtered.map((v, i) => (
-                                <span key={i}>
-                                    <span className="text-gray-400">CH{i + 1}</span>{' '}
-                                    <span className="font-semibold">{v.toFixed(3)}</span>{' '}
-                                    <span className="text-gray-500">({d1Live.raw[i]})</span>
-                                </span>
-                            ))}
+                        <div className="px-2 py-1 border-b text-xs font-mono bg-black/5 dark:bg-white/5 space-y-0.5">
+                            <div className="flex gap-3">
+                                <span className="text-gray-500">#{d1Live.counter}</span>
+                                {selectedChannels.map((ch) => {
+                                    const i = ch - 1;
+                                    return (
+                                        <span key={i}>
+                                            <span className="text-gray-400">CH{ch}</span>{' '}
+                                            <span className="font-semibold">{d1Live.filtered[i]?.toFixed(3) ?? '—'}</span>{' '}
+                                            <span className="text-gray-500">({d1Live.raw[i] ?? '—'})</span>
+                                        </span>
+                                    );
+                                })}
+                            </div>
+                            {selectedChannels.some(ch => d1EnabledBandsRef.current[ch - 1]?.size > 0) && (
+                                <div className="flex gap-3">
+                                    <span className="text-gray-500 w-6" />
+                                    {selectedChannels.map((ch) => {
+                                        const i = ch - 1;
+                                        const enabled = d1EnabledBandsRef.current[i];
+                                        if (!enabled || enabled.size === 0) return <span key={i} />;
+                                        return (
+                                            <span key={i} className="flex gap-1.5">
+                                                <span className="text-gray-400">CH{ch}</span>
+                                                {enabled.has('alpha') && (
+                                                    <span><span style={{ color: BAND_COLORS.alpha }}>α</span> {(d1Live.bands.alpha?.[i] ?? 0).toFixed(3)}</span>
+                                                )}
+                                                {enabled.has('theta') && (
+                                                    <span><span style={{ color: BAND_COLORS.theta }}>θ</span> {(d1Live.bands.theta?.[i] ?? 0).toFixed(3)}</span>
+                                                )}
+                                                {enabled.has('delta') && (
+                                                    <span><span style={{ color: BAND_COLORS.delta }}>δ</span> {(d1Live.bands.delta?.[i] ?? 0).toFixed(3)}</span>
+                                                )}
+                                            </span>
+                                        );
+                                    })}
+                                </div>
+                            )}
                         </div>
                     )}
                     <div ref={d1ContainerRef} className="flex-1 relative" />
@@ -1029,15 +1283,44 @@ const DualStream = () => {
                         </div>
                     </div>
                     {showLiveData && isD2Connected && (
-                        <div className="px-2 py-1 border-b text-xs font-mono flex gap-3 bg-black/5 dark:bg-white/5">
-                            <span className="text-gray-500">#{d2Live.counter}</span>
-                            {d2Live.filtered.map((v, i) => (
-                                <span key={i}>
-                                    <span className="text-gray-400">CH{i + 1}</span>{' '}
-                                    <span className="font-semibold">{v.toFixed(3)}</span>{' '}
-                                    <span className="text-gray-500">({d2Live.raw[i]})</span>
-                                </span>
-                            ))}
+                        <div className="px-2 py-1 border-b text-xs font-mono bg-black/5 dark:bg-white/5 space-y-0.5">
+                            <div className="flex gap-3">
+                                <span className="text-gray-500">#{d2Live.counter}</span>
+                                {selectedChannels.map((ch) => {
+                                    const i = ch - 1;
+                                    return (
+                                        <span key={i}>
+                                            <span className="text-gray-400">CH{ch}</span>{' '}
+                                            <span className="font-semibold">{d2Live.filtered[i]?.toFixed(3) ?? '—'}</span>{' '}
+                                            <span className="text-gray-500">({d2Live.raw[i] ?? '—'})</span>
+                                        </span>
+                                    );
+                                })}
+                            </div>
+                            {selectedChannels.some(ch => d2EnabledBandsRef.current[ch - 1]?.size > 0) && (
+                                <div className="flex gap-3">
+                                    <span className="text-gray-500 w-6" />
+                                    {selectedChannels.map((ch) => {
+                                        const i = ch - 1;
+                                        const enabled = d2EnabledBandsRef.current[i];
+                                        if (!enabled || enabled.size === 0) return <span key={i} />;
+                                        return (
+                                            <span key={i} className="flex gap-1.5">
+                                                <span className="text-gray-400">CH{ch}</span>
+                                                {enabled.has('alpha') && (
+                                                    <span><span style={{ color: BAND_COLORS.alpha }}>α</span> {(d2Live.bands.alpha?.[i] ?? 0).toFixed(3)}</span>
+                                                )}
+                                                {enabled.has('theta') && (
+                                                    <span><span style={{ color: BAND_COLORS.theta }}>θ</span> {(d2Live.bands.theta?.[i] ?? 0).toFixed(3)}</span>
+                                                )}
+                                                {enabled.has('delta') && (
+                                                    <span><span style={{ color: BAND_COLORS.delta }}>δ</span> {(d2Live.bands.delta?.[i] ?? 0).toFixed(3)}</span>
+                                                )}
+                                            </span>
+                                        );
+                                    })}
+                                </div>
+                            )}
                         </div>
                     )}
                     <div ref={d2ContainerRef} className="flex-1 relative" />
@@ -1261,6 +1544,62 @@ const DualStream = () => {
                             </div>
                         </PopoverContent>
                     </Popover>
+
+                    {/* Brainwave Bands — only when EEG mode is active */}
+                    {Object.values(d1AppliedEXGFiltersRef.current).some(v => v === 3) && (
+                        <Popover open={isBandPopoverOpen} onOpenChange={setIsBandPopoverOpen}>
+                            <PopoverTrigger asChild>
+                                <Button className="rounded-xl flex items-center gap-1" disabled={!isDisplay}>
+                                    <Activity size={16} /> Bands
+                                </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-72 p-4 mx-4 mb-2">
+                                <div className="flex flex-col max-h-80 overflow-y-auto">
+                                    {/* All channels row */}
+                                    <div className="flex items-center pb-2">
+                                        <div className="text-sm font-semibold w-12"><ReplaceAll size={20} /></div>
+                                        <div className="flex space-x-1">
+                                            {(['alpha', 'theta', 'delta'] as BandType[]).map(band => (
+                                                <Button key={band} variant="outline" size="sm"
+                                                    onClick={() => toggleBandAllChannels(band)}
+                                                    style={allHaveBand(band) ? { backgroundColor: BAND_COLORS[band], color: '#000' } : {}}
+                                                    className="rounded-xl text-xs">
+                                                    {band.charAt(0).toUpperCase() + band.slice(1)}
+                                                </Button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    {/* Per-channel rows */}
+                                    {channelNames.map((name, index) => (
+                                        <div key={name} className="flex flex-col space-y-1 py-1">
+                                            <div className="flex items-center">
+                                                <div className="text-sm font-semibold w-12">{name}</div>
+                                                <div className="flex space-x-1">
+                                                    {(['alpha', 'theta', 'delta'] as BandType[]).map(band => (
+                                                        <Button key={band} variant="outline" size="sm"
+                                                            onClick={() => toggleBand(index, band)}
+                                                            style={d1EnabledBandsRef.current[index]?.has(band) ? { backgroundColor: BAND_COLORS[band], color: '#000' } : {}}
+                                                            className="rounded-xl text-xs">
+                                                            {band.charAt(0).toUpperCase() + band.slice(1)}
+                                                        </Button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                            {/* Per-channel gain slider */}
+                                            <div className="flex items-center pl-12">
+                                                <span className="text-xs text-gray-500 w-10">Gain:</span>
+                                                <input type="range" min="1" max="10" step="0.5"
+                                                    value={d1BandGainRef.current[index] ?? 3}
+                                                    onChange={(e) => setBandGain(index, Number(e.target.value))}
+                                                    className="flex-1 h-[0.15rem]" />
+                                                <span className="text-xs ml-1 w-8">{(d1BandGainRef.current[index] ?? 3).toFixed(1)}x</span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </PopoverContent>
+                        </Popover>
+                    )}
 
                     {/* Settings */}
                     <Popover>
