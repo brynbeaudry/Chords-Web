@@ -32,6 +32,10 @@ export class HighPassFilter {
         this.currentSamplingRate = samplingRate;
     }
 
+    reset(): void {
+        this.z1 = this.z2 = this.x1 = 0;
+    }
+
     // Process the input sample through the appropriate high-pass filter
     process(input: number): number {
         let output = input;
@@ -110,6 +114,11 @@ export class EXGFilter {
         this.bitsPoints = Math.pow(2, parseInt(bits)
         ); // Adjust according to your ADC resolution
         this.yScale = 2 / this.bitsPoints;
+    }
+
+    reset(): void {
+        this.z1 = this.z2 = 0;
+        this.x1 = this.x2 = this.x3 = this.x4 = 0;
     }
 
     process(input: number, type: number): number {
@@ -231,6 +240,11 @@ export class BandpassFilter {
             this.lpZ1 = this.lpZ2 = this.lpX1 = 0;
         }
         this.samplingRate = rate;
+    }
+
+    reset(): void {
+        this.hpZ1 = this.hpZ2 = this.hpX1 = 0;
+        this.lpZ1 = this.lpZ2 = this.lpX1 = 0;
     }
 
     process(input: number): number {
@@ -367,6 +381,12 @@ export class BandPowerEnvelope {
         return v;
     }
 
+    reset(): void {
+        this.filter.reset();
+        this.power = 0;
+        this.lastSignal = 0;
+    }
+
     getPower(): number { return this.power; }
     getSignal(): number { return this.lastSignal; }
 }
@@ -396,6 +416,11 @@ export class Notch {
 
     setbits(currentSamplingRate: number): void {
         this.currentSamplingRate = currentSamplingRate;
+    }
+
+    reset(): void {
+        this.z1_1 = this.z2_1 = this.z1_2 = this.z2_2 = 0;
+        this.x_1 = this.x_2 = 0;
     }
 
     // Method to apply the filter

@@ -816,11 +816,51 @@ const DualStream = () => {
         [d1WglPlots, d2WglPlots, d1LinesRef, d2LinesRef, d1SweepPositions, d2SweepPositions, Zoom, timeBase]
     );
 
-    // ─── Sample processing ──────────────────────────────────────────
-    const processDeviceSample = useCallback((slot: 1 | 2, dataView: DataView): void => {
-        if (dataView.byteLength !== SINGLE_SAMPLE_LEN) return;
+    // ─── Stream-source mutex ────────────────────────────────────────
+    type StreamMode = 'off' | 'live' | 'replay';
+    const streamModeRef = useRef<StreamMode>('off');
+    const [streamMode, setStreamMode] = useState<StreamMode>('off');
+    useEffect(() => { streamModeRef.current = streamMode; }, [streamMode]);
 
-        const prevCounter = slot === 1 ? d1PrevSampleCounter : d2PrevSampleCounter;
+    // Auto-transition 'off' <-> 'live' based on connection state. Replay is sticky.
+    useEffect(() => {
+        if (streamMode === 'replay') return;
+        const anyConnected = isD1Connected || isD2Connected;
+        const next: StreamMode = anyConnected ? 'live' : 'off';
+        if (next !== streamMode) {
+            setStreamMode(next);
+            streamModeRef.current = next;
+        }
+    }, [isD1Connected, isD2Connected, streamMode]);
+
+    // Reset every stateful element in the per-sample pipeline for the given slot.
+    // Called when entering/leaving replay so filter biquads and detection envelopes
+    // don't leak history across mode transitions.
+    const resetSignalChain = (slot: 1 | 2) => {
+        const hp = slot === 1 ? d1HighPassFiltersRef : d2HighPassFiltersRef;
+        const exg = slot === 1 ? d1ExgFiltersRef : d2ExgFiltersRef;
+        const notch = slot === 1 ? d1NotchFiltersRef : d2NotchFiltersRef;
+        const bandFilters = slot === 1 ? d1BandFiltersRef : d2BandFiltersRef;
+        const envs = slot === 1 ? d1BandEnvelopesRef : d2BandEnvelopesRef;
+        const prev = slot === 1 ? d1PrevSampleCounter : d2PrevSampleCounter;
+        const labelRings = slot === 1 ? d1LabelRingsRef : d2LabelRingsRef;
+        const labelSweep = slot === 1 ? d1LabelSweepRef : d2LabelSweepRef;
+        const state = slot === 1 ? d1BandStateRef : d2BandStateRef;
+        hp.current.forEach((f) => f.reset());
+        exg.current.forEach((f) => f.reset());
+        notch.current.forEach((f) => f.reset());
+        for (const arr of bandFilters.current.values()) arr.forEach((f) => f.reset());
+        for (const arr of envs.current.values()) arr.forEach((e) => e.reset());
+        prev.current = null;
+        labelRings.current.forEach((r) => r && r.fill(0));
+        labelSweep.current.fill(0);
+        for (let ch = 0; ch < numChannels; ch++) state.current[ch] = { ...emptyBandState };
+    };
+
+    // ─── Source-agnostic per-sample pipeline ────────────────────────
+    // Live (`processDeviceSample`) and replay (`ingestRow`) both funnel here.
+    // tWallMs is the offset from the recording start in ms; 0 when not recording.
+    const ingestSample = (slot: 1 | 2, sampleCounter: number, rawChannels: number[], tWallMs: number, tStreamMs: number): void => {
         const channelDataRef = slot === 1 ? d1ChannelDataRef : d2ChannelDataRef;
         const notchFilters = slot === 1 ? d1NotchFiltersRef : d2NotchFiltersRef;
         const exgFilters = slot === 1 ? d1ExgFiltersRef : d2ExgFiltersRef;
@@ -840,26 +880,12 @@ const DualStream = () => {
         const fillingIdx = slot === 1 ? d1FillingIndex : d2FillingIndex;
         const recBuffers = slot === 1 ? d1RecordingBuffers : d2RecordingBuffers;
 
-        const sampleCounter = dataView.getUint8(0);
-
-        if (prevCounter.current === null) {
-            prevCounter.current = sampleCounter;
-        } else {
-            const expected = (prevCounter.current + 1) % 256;
-            if (sampleCounter !== expected) {
-                console.log(`Device ${slot}: Missing sample: expected ${expected}, got ${sampleCounter}`);
-            }
-            prevCounter.current = sampleCounter;
-        }
-
         channelDataRef.current = [sampleCounter];
-        const rawChannels: number[] = [];
 
         const ADC_Y_SCALE = 2 / 4096; // 12-bit ADC scaling (matches EXGFilter.yScale)
 
         for (let channel = 0; channel < numChannels; channel++) {
-            const sample = dataView.getInt16(1 + (channel * 2), false);
-            rawChannels.push(sample);
+            const sample = rawChannels[channel] ?? 0;
             const hpOutput = highPassFilters.current[channel].process(sample);
             const filteredValue = notchFilters.current[channel].process(
                 exgFilters.current[channel].process(
@@ -966,14 +992,21 @@ const DualStream = () => {
             }
         }
 
-        // Recording
-        if (isRecordingRef.current) {
-            const channeldatavalues = channelDataRef.current
-                .slice(0, canvasElementCountRef.current + 1)
-                .map((v) => (v !== undefined ? v : null))
-                .filter((v): v is number => v !== null);
+        // Recording — only when in live mode (replay never records, see §6 in DUAL_STREAM_RECORDING_REPLAY.md)
+        if (isRecordingRef.current && streamModeRef.current !== 'replay') {
+            // New row format: [slot, tWallMs, tStreamMs, counter, raw0, raw1, raw2, filtered0, filtered1, filtered2]
+            const row: number[] = [
+                slot,
+                tWallMs,
+                tStreamMs,
+                sampleCounter,
+                rawChannels[0] ?? 0, rawChannels[1] ?? 0, rawChannels[2] ?? 0,
+                channelDataRef.current[1] ?? 0,
+                channelDataRef.current[2] ?? 0,
+                channelDataRef.current[3] ?? 0,
+            ];
 
-            recBuffers.current[activeBufferIdx.current][fillingIdx.current] = channeldatavalues;
+            recBuffers.current[activeBufferIdx.current][fillingIdx.current] = row;
 
             if (fillingIdx.current >= MAX_BUFFER_SIZE - 1) {
                 processBuffer(activeBufferIdx.current, canvasElementCountRef.current, selectedChannels, slot);
@@ -994,7 +1027,55 @@ const DualStream = () => {
 
         channelDataRef.current = [];
         samplesReceived.current += 1;
+    };
+
+    // ─── Live: BLE notification → ingestSample ──────────────────────
+    const processDeviceSample = useCallback((slot: 1 | 2, dataView: DataView): void => {
+        // Mutex: while replaying, BLE samples are ignored entirely.
+        if (streamModeRef.current === 'replay') return;
+        if (dataView.byteLength !== SINGLE_SAMPLE_LEN) return;
+
+        const prevCounter = slot === 1 ? d1PrevSampleCounter : d2PrevSampleCounter;
+        const sampleCounter = dataView.getUint8(0);
+        if (prevCounter.current === null) {
+            prevCounter.current = sampleCounter;
+        } else {
+            const expected = (prevCounter.current + 1) % 256;
+            if (sampleCounter !== expected) {
+                console.log(`Device ${slot}: Missing sample: expected ${expected}, got ${sampleCounter}`);
+            }
+            prevCounter.current = sampleCounter;
+        }
+
+        const rawChannels: number[] = [
+            dataView.getInt16(1, false),
+            dataView.getInt16(3, false),
+            dataView.getInt16(5, false),
+        ];
+        const tWallMs = isRecordingRef.current ? (Date.now() - recordingStartTimeRef.current) : 0;
+        const tStreamMs = performance.now();
+        ingestSample(slot, sampleCounter, rawChannels, tWallMs, tStreamMs);
     }, [canvasElementCountRef.current, selectedChannels, timeBase, updateDevicePlots]);
+
+    // ─── Replay: recorded row → ingestSample ────────────────────────
+    // Row schema: [slot, tWallMs, tStreamMs, counter, raw0, raw1, raw2, filtered0, filtered1, filtered2]
+    const ingestRow = (row: number[]): void => {
+        if (!row || row.length < 7) return;
+        const slot = row[0] === 2 ? 2 : 1;
+        const counter = row[3] ?? 0;
+        const raw: number[] = [row[4] ?? 0, row[5] ?? 0, row[6] ?? 0];
+        const prev = slot === 1 ? d1PrevSampleCounter : d2PrevSampleCounter;
+        if (prev.current === null) {
+            prev.current = counter;
+        } else {
+            const expected = (prev.current + 1) % 256;
+            if (counter !== expected) {
+                // Don't log during replay — counter discontinuities are normal across file boundaries
+            }
+            prev.current = counter;
+        }
+        ingestSample(slot, counter, raw, row[1] ?? 0, row[2] ?? performance.now());
+    };
 
     // ─── Stable notification handler refs (avoids stale closures) ───
     const processDevice1Ref = useRef((_dv: DataView) => {});
@@ -1269,6 +1350,144 @@ const DualStream = () => {
         });
     };
 
+    // ─── Replay ─────────────────────────────────────────────────────
+    interface ReplayMeta {
+        samplingRate?: number;
+        selectedChannels?: number[];
+        exg?: { [ch: number]: number };
+        notch?: { [ch: number]: number };
+        startedAtIso?: string;
+        schemaVersion?: number;
+    }
+    const replayRowsRef = useRef<number[][]>([]);
+    const replayTickRef = useRef<number>(0);
+    const replayStartedAtRef = useRef<number>(0);
+    const replayBaseTimeMsRef = useRef<number>(0);
+    const replaySpeedRef = useRef<number>(1);
+    const replayPausedRef = useRef<boolean>(false);
+    const replayMetaRef = useRef<ReplayMeta | null>(null);
+    const [replayFilename, setReplayFilename] = useState<string | null>(null);
+    const [replaySpeed, setReplaySpeed] = useState<number>(1);
+    const [replayPaused, setReplayPaused] = useState<boolean>(false);
+    const [replayProgress, setReplayProgress] = useState<{ cur: number; total: number }>({ cur: 0, total: 0 });
+    const [replayDuration, setReplayDuration] = useState<number>(0);
+    useEffect(() => { replaySpeedRef.current = replaySpeed; }, [replaySpeed]);
+    useEffect(() => { replayPausedRef.current = replayPaused; }, [replayPaused]);
+
+    const loadRecording = (filename: string): Promise<{ rows: number[][]; meta: ReplayMeta | null }> => {
+        if (!workerRef.current) initializeWorker();
+        return new Promise((resolve, reject) => {
+            const w = workerRef.current;
+            if (!w) { reject(new Error('Worker not initialized')); return; }
+            const handler = (e: MessageEvent) => {
+                if (e.data?.action !== 'loadByFilename') return;
+                w.removeEventListener('message', handler);
+                if (e.data.error) reject(new Error(e.data.error));
+                else resolve({ rows: (e.data.rows ?? []) as number[][], meta: (e.data.meta ?? null) as ReplayMeta | null });
+            };
+            w.addEventListener('message', handler);
+            w.postMessage({ action: 'loadByFilename', filename });
+        });
+    };
+
+    const replayLoop = () => {
+        if (streamModeRef.current !== 'replay') return;
+        if (!replayPausedRef.current) {
+            const elapsed = (performance.now() - replayStartedAtRef.current) * replaySpeedRef.current;
+            const replayWallMs = replayBaseTimeMsRef.current + elapsed;
+            const rows = replayRowsRef.current;
+            while (replayTickRef.current < rows.length) {
+                const row = rows[replayTickRef.current];
+                if (!Array.isArray(row) || row.length < 7) { replayTickRef.current++; continue; }
+                const rowT = row[1] ?? 0;
+                if (rowT > replayWallMs) break;
+                ingestRow(row);
+                replayTickRef.current++;
+            }
+            if (replayTickRef.current % 60 === 0 || replayTickRef.current >= rows.length) {
+                setReplayProgress({ cur: Math.floor(replayWallMs), total: replayDuration });
+            }
+            if (replayTickRef.current >= rows.length) {
+                // Finished — drop back to off (or live if devices are still connected, handled by user).
+                stopReplay();
+                return;
+            }
+        }
+        requestAnimationFrame(replayLoop);
+    };
+
+    const startReplay = async (filename: string) => {
+        if (isRecordingRef.current) {
+            toast.error("Stop recording before starting a replay.");
+            return;
+        }
+        try {
+            const { rows, meta } = await loadRecording(filename);
+            if (!rows || rows.length === 0) {
+                toast.error("Recording is empty or missing.");
+                return;
+            }
+            // Sort by tWallMs in case d1/d2 batches got interleaved out of order at write time.
+            rows.sort((a, b) => (a[1] ?? 0) - (b[1] ?? 0));
+
+            const lastT = rows[rows.length - 1]?.[1] ?? 0;
+            replayMetaRef.current = meta;
+            replayRowsRef.current = rows;
+            replayTickRef.current = 0;
+            replayBaseTimeMsRef.current = rows[0]?.[1] ?? 0;
+            replayStartedAtRef.current = performance.now();
+            replayPausedRef.current = false;
+            setReplayPaused(false);
+            setReplayDuration(lastT);
+            setReplayProgress({ cur: 0, total: lastT });
+            setReplayFilename(filename);
+
+            // Reset both devices' filter state so live history doesn't leak into the replayed stream.
+            resetSignalChain(1);
+            resetSignalChain(2);
+
+            setStreamMode('replay');
+            streamModeRef.current = 'replay';
+            requestAnimationFrame(replayLoop);
+            toast.success(`Replaying ${filename}`);
+        } catch (e: any) {
+            toast.error(`Failed to load recording: ${e?.message ?? e}`);
+        }
+    };
+
+    const stopReplay = () => {
+        if (streamModeRef.current !== 'replay') return;
+        replayRowsRef.current = [];
+        replayTickRef.current = 0;
+        replayPausedRef.current = false;
+        setReplayPaused(false);
+        setReplayFilename(null);
+        setReplayProgress({ cur: 0, total: 0 });
+        setReplayDuration(0);
+        // Reset signal chain so any subsequent live samples start clean
+        resetSignalChain(1);
+        resetSignalChain(2);
+        // Drop back to live if any device is connected, else off
+        const next: StreamMode = (isD1Connected || isD2Connected) ? 'live' : 'off';
+        setStreamMode(next);
+        streamModeRef.current = next;
+    };
+
+    const pauseReplay = () => {
+        if (streamModeRef.current !== 'replay') return;
+        if (!replayPausedRef.current) {
+            // Freeze: capture the wall-time we'd resume from
+            const elapsed = (performance.now() - replayStartedAtRef.current) * replaySpeedRef.current;
+            replayBaseTimeMsRef.current = replayBaseTimeMsRef.current + elapsed;
+            replayPausedRef.current = true;
+            setReplayPaused(true);
+        } else {
+            replayStartedAtRef.current = performance.now();
+            replayPausedRef.current = false;
+            setReplayPaused(false);
+        }
+    };
+
     // ─── Recording ──────────────────────────────────────────────────
     const handleTimeSelection = (minutes: number | null) => {
         if (minutes === null) {
@@ -1289,6 +1508,11 @@ const DualStream = () => {
         if (isRecordingRef.current) {
             stopRecording();
         } else {
+            // Recording is a live-only operation. Replay never writes to disk.
+            if (streamMode === 'replay') {
+                toast.error("Stop replay before starting a recording.");
+                return;
+            }
             isRecordingRef.current = true;
             const now = new Date();
             recordingStartTimeRef.current = Date.now();
@@ -1297,6 +1521,18 @@ const DualStream = () => {
             const filename = `ChordsWeb-DualStream-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-` +
                 `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}.csv`;
             currentFileNameRef.current = filename;
+
+            // Push metadata so a future replay can restore sampling rate + filter config.
+            if (!workerRef.current) initializeWorker();
+            const meta = {
+                samplingRate: samplingrateref.current,
+                selectedChannels: [...selectedChannels],
+                exg: { ...d1AppliedEXGFiltersRef.current },
+                notch: { ...d1AppliedFiltersRef.current },
+                startedAtIso: now.toISOString(),
+                schemaVersion: 2,
+            };
+            workerRef.current?.postMessage({ action: 'writeMeta', filename, meta });
         }
     };
 
@@ -1331,6 +1567,19 @@ const DualStream = () => {
             }
         });
     };
+
+    // Populate the saved-files list on mount so replay is reachable without a prior record.
+    useEffect(() => {
+        (async () => {
+            try {
+                const data = await getFileCountFromIndexedDB();
+                if (Array.isArray(data)) setDatasets(data);
+            } catch (e) {
+                /* worker may not be ready yet; will populate after first stop */
+            }
+        })();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const handlecustomTimeInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         setCustomTimeInput(e.target.value.replace(/\D/g, ""));
@@ -1531,6 +1780,31 @@ const DualStream = () => {
             <div className="bg-highlight">
                 <Navbar isDisplay={true} />
             </div>
+
+            {/* Stream-mode banner — visible only while replay is active so users know the canvas
+                isn't reflecting live device input. */}
+            {streamMode === 'replay' && (
+                <div className="px-3 py-1.5 bg-purple-100 dark:bg-purple-950 border-y border-purple-300 dark:border-purple-800 flex items-center justify-between text-sm">
+                    <span>
+                        <span className="font-semibold">▶ Replay mode</span>
+                        {replayFilename && <> — {replayFilename}</>}
+                        <span className="ml-3 text-gray-500">
+                            Canvas + WebSocket are driven by the file; device input is paused.
+                        </span>
+                    </span>
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500">
+                            {(replayProgress.cur / 1000).toFixed(1)}s / {(replayProgress.total / 1000).toFixed(1)}s · {replaySpeed.toFixed(2)}×
+                        </span>
+                        <Button size="sm" onClick={pauseReplay} className="rounded-xl">
+                            {replayPaused ? <Play size={14} /> : <Pause size={14} />}
+                        </Button>
+                        <Button size="sm" onClick={stopReplay} className="rounded-xl">
+                            <CircleStop size={14} />
+                        </Button>
+                    </div>
+                </div>
+            )}
 
             {/* Split View Container */}
             <div className="flex-1 flex flex-row gap-2 p-2 min-h-0">
@@ -1742,46 +2016,86 @@ const DualStream = () => {
                     <TooltipProvider>
                         <Tooltip>
                             <TooltipTrigger asChild>
-                                <Button className="rounded-xl" onClick={handleRecord} disabled={!isAnyConnected || !isDisplay}>
+                                <Button className="rounded-xl" onClick={handleRecord} disabled={!isAnyConnected || !isDisplay || streamMode === 'replay'}>
                                     {isRecordingRef.current ? <CircleStop /> : <Circle fill="red" />}
                                 </Button>
                             </TooltipTrigger>
-                            <TooltipContent><p>{!isRecordingRef.current ? "Start Recording" : "Stop Recording"}</p></TooltipContent>
+                            <TooltipContent><p>{
+                                streamMode === 'replay' ? "Stop replay to record"
+                                : !isRecordingRef.current ? "Start Recording" : "Stop Recording"
+                            }</p></TooltipContent>
                         </Tooltip>
                     </TooltipProvider>
 
-                    {/* Files */}
+                    {/* Files (recordings + replay) — accessible regardless of device-connection state */}
                     <TooltipProvider>
                         <div className="flex">
                             <Popover>
                                 <PopoverTrigger asChild>
-                                    <Button className="rounded-xl p-4" disabled={!isAnyConnected}>
+                                    <Button className="rounded-xl p-4">
                                         <FileArchive size={16} />
                                     </Button>
                                 </PopoverTrigger>
-                                <PopoverContent className="p-4 text-base shadow-lg rounded-xl w-full">
+                                <PopoverContent className="p-4 text-base shadow-lg rounded-xl w-[28rem]">
                                     <div className="space-y-4">
-                                        {datasets.length > 0 ? (
-                                            datasets.map((dataset) => (
-                                                <div key={dataset} className="flex justify-between items-center">
-                                                    <span className="mr-4">{dataset}</span>
-                                                    <div className="flex space-x-2">
-                                                        <Button onClick={() => saveDataByFilename(dataset, canvasElementCountRef.current, selectedChannels)} className="rounded-xl px-4">
-                                                            <Download size={16} />
+                                        {streamMode === 'replay' && replayFilename && (
+                                            <div className="rounded-lg p-3 bg-purple-100 dark:bg-purple-950 border border-purple-300 dark:border-purple-800">
+                                                <div className="flex items-center justify-between text-sm">
+                                                    <span><span className="font-semibold">▶ Replaying:</span> {replayFilename}</span>
+                                                    <div className="flex gap-1">
+                                                        <Button size="sm" onClick={pauseReplay} className="rounded-xl px-3">
+                                                            {replayPaused ? <Play size={14} /> : <Pause size={14} />}
                                                         </Button>
-                                                        <Button onClick={() => deleteFileByFilename(dataset)} className="rounded-xl px-4">
-                                                            <Trash2 size={16} />
+                                                        <Button size="sm" onClick={stopReplay} className="rounded-xl px-3">
+                                                            <CircleStop size={14} />
                                                         </Button>
                                                     </div>
                                                 </div>
-                                            ))
+                                                <div className="flex items-center gap-2 mt-2 text-xs">
+                                                    <span className="text-gray-500 w-12">Speed:</span>
+                                                    <input type="range" min="0.25" max="4" step="0.25"
+                                                        value={replaySpeed}
+                                                        onChange={(e) => setReplaySpeed(Number(e.target.value))}
+                                                        className="flex-1 h-[0.15rem]" />
+                                                    <span className="w-10 text-right">{replaySpeed.toFixed(2)}×</span>
+                                                </div>
+                                                <div className="text-xs text-gray-500 mt-2">
+                                                    {(replayProgress.cur / 1000).toFixed(1)}s / {(replayProgress.total / 1000).toFixed(1)}s
+                                                </div>
+                                            </div>
+                                        )}
+                                        {datasets.length > 0 ? (
+                                            datasets.map((dataset) => {
+                                                const isThisReplaying = streamMode === 'replay' && replayFilename === dataset;
+                                                return (
+                                                    <div key={dataset} className="flex justify-between items-center">
+                                                        <span className="mr-4 truncate" title={dataset}>{dataset}</span>
+                                                        <div className="flex space-x-2 flex-shrink-0">
+                                                            <Button
+                                                                onClick={() => isThisReplaying ? stopReplay() : startReplay(dataset)}
+                                                                disabled={isRecordingRef.current || (streamMode === 'replay' && !isThisReplaying)}
+                                                                className="rounded-xl px-4">
+                                                                {isThisReplaying ? <CircleStop size={16} /> : <Play size={16} />}
+                                                            </Button>
+                                                            <Button onClick={() => saveDataByFilename(dataset, canvasElementCountRef.current, selectedChannels)} className="rounded-xl px-4">
+                                                                <Download size={16} />
+                                                            </Button>
+                                                            <Button onClick={() => deleteFileByFilename(dataset)}
+                                                                disabled={isThisReplaying}
+                                                                className="rounded-xl px-4">
+                                                                <Trash2 size={16} />
+                                                            </Button>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })
                                         ) : (
                                             <p className="text-base">No datasets available</p>
                                         )}
                                         {datasets.length > 0 && (
                                             <div className="flex justify-between mt-4">
                                                 <Button onClick={saveAllDataAsZip} className="rounded-xl p-2 w-full mr-2">Download All as Zip</Button>
-                                                <Button onClick={deleteAllDataFromIndexedDB} className="rounded-xl p-2 w-full">Delete All</Button>
+                                                <Button onClick={deleteAllDataFromIndexedDB} disabled={streamMode === 'replay'} className="rounded-xl p-2 w-full">Delete All</Button>
                                             </div>
                                         )}
                                     </div>

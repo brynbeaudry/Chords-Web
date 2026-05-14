@@ -5,7 +5,7 @@ let canvasCount = 0;
 let selectedChannels: number[] = [];
 
 self.onmessage = async (event) => {
-  const { action, data, filename, selectedChannels: channels } = event.data;
+  const { action, data, filename, selectedChannels: channels, meta } = event.data;
 
   // Open IndexedDB
   const db = await openIndexedDB();
@@ -40,6 +40,28 @@ self.onmessage = async (event) => {
         handlePostMessage({ success });
       } catch (error) {
         handleError('Failed to write data to IndexedDB');
+      }
+      break;
+
+    case 'writeMeta':
+      try {
+        await writeMetaToIndexedDB(db, filename, meta);
+        handlePostMessage({ success: true, action: 'writeMeta' });
+      } catch (error) {
+        handleError('Failed to write meta to IndexedDB');
+      }
+      break;
+
+    case 'loadByFilename':
+      try {
+        const record = await loadRecordByFilename(db, filename);
+        handlePostMessage({
+          action: 'loadByFilename',
+          rows: record?.content ?? [],
+          meta: record?.meta ?? null,
+        });
+      } catch (error) {
+        handleError('Failed to load recording from IndexedDB');
       }
       break;
 
@@ -184,17 +206,62 @@ const getAllDataFromIndexedDB = async (db: IDBDatabase): Promise<any[]> => {
   }
 };
 
+// Write or merge metadata onto an existing recording record.
+const writeMetaToIndexedDB = async (db: IDBDatabase, filename: string, meta: any): Promise<void> => {
+  const existing = await performIndexDBTransaction(db, "ChordsRecordings", "readwrite", (store) => {
+    return new Promise<any>((resolve, reject) => {
+      const req = store.get(filename);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(new Error("Error retrieving record for meta write"));
+    });
+  });
+  const next = existing
+    ? { ...existing, meta }
+    : { filename, content: [] as number[][], meta };
+  await performIndexDBTransaction(db, "ChordsRecordings", "readwrite", (store) => {
+    return new Promise<void>((resolve, reject) => {
+      const putReq = store.put(next);
+      putReq.onsuccess = () => resolve();
+      putReq.onerror = () => reject(new Error("Error writing meta"));
+    });
+  });
+};
+
+const loadRecordByFilename = async (db: IDBDatabase, filename: string): Promise<{ filename: string; content: number[][]; meta?: any } | null> => {
+  return performIndexDBTransaction(db, "ChordsRecordings", "readonly", (store) => {
+    return new Promise((resolve, reject) => {
+      const req = store.index("filename").get(filename);
+      req.onsuccess = () => resolve(req.result ?? null);
+      req.onerror = () => reject(new Error("Error retrieving record by filename"));
+    });
+  });
+};
+
 // Function to convert data to CSV
-const convertToCSV = (data: any[], canvasCount: number, selectedChannels: number[]): string => {
+// Two row formats supported:
+//   Legacy (pre-dual-stream-replay):  [counter, ch1, ch2, ch3]
+//   Replay-ready:                     [slot, tWallMs, tStreamMs, counter, raw0, raw1, raw2, filtered0, filtered1, filtered2]
+// We detect by length and emit the appropriate header. Replay-ready files also get a meta
+// comment line at the very top so the loader can restore sampling rate / filter config.
+const convertToCSV = (data: any[], canvasCount: number, selectedChannels: number[], meta?: any): string => {
   if (!Array.isArray(data) || data.length === 0) return "";
 
-  // Generate the header dynamically for the selected channels
-  const header = ["Counter", ...selectedChannels.map((channel) => `Channel${channel}`)];
+  const firstRow = data.find((r) => Array.isArray(r) && r.length > 0);
+  const isReplayReady = Array.isArray(firstRow) && firstRow.length >= 10;
 
-  // Create rows by filtering and mapping valid data
-    const rows = data
+  let header: string[];
+  if (isReplayReady) {
+    header = [
+      "Slot", "tWallMs", "tStreamMs", "Counter",
+      "Raw0", "Raw1", "Raw2",
+      "Filtered0", "Filtered1", "Filtered2",
+    ];
+  } else {
+    header = ["Counter", ...selectedChannels.map((channel) => `Channel${channel}`)];
+  }
+
+  const rows = data
     .filter((item, index) => {
-      // Ensure each item is an array and has valid data
       if (!item || !Array.isArray(item) || item.length === 0) {
         console.warn(`Skipping invalid data at index ${index}:`, item);
         return false;
@@ -202,29 +269,31 @@ const convertToCSV = (data: any[], canvasCount: number, selectedChannels: number
       return true;
     })
     .map((item, index) => {
-      // Generate filtered row with Counter and selected channel data
-      const filteredRow = [
-        item[0], // Counter
-        ...selectedChannels.map((channel, i) => {
-          if (channel) {
-
-            return item[i + 1];
-          } else {
+      let filteredRow: any[];
+      if (isReplayReady) {
+        filteredRow = item;
+      } else {
+        filteredRow = [
+          item[0],
+          ...selectedChannels.map((channel, i) => {
+            if (channel) return item[i + 1];
             console.warn(`Missing data for channel ${channel} in item ${index}:`, item);
-            return ""; // Default empty value for missing data
-          }
-        }),
-      ];
-
+            return "";
+          }),
+        ];
+      }
       return filteredRow
-        .map((field) => (field !== undefined && field !== null ? JSON.stringify(field) : "")) // Ensure proper formatting
+        .map((field) => (field !== undefined && field !== null ? JSON.stringify(field) : ""))
         .join(",");
     });
 
-  // Combine header and rows into a CSV format
-  const csvContent = [header.join(","), ...rows].join("\n");
-
-  return csvContent;
+  const lines: string[] = [];
+  if (isReplayReady && meta) {
+    lines.push(`# meta: ${JSON.stringify(meta)}`);
+  }
+  lines.push(header.join(","));
+  lines.push(...rows);
+  return lines.join("\n");
 };
 
 // Function to save all data as a ZIP file
@@ -248,7 +317,7 @@ const saveAllDataAsZip = async (canvasCount: number, selectedChannels: number[])
 
     allData.forEach((record) => {
       try {
-        const csvData = convertToCSV(record.content, canvasCount, selectedChannels);
+        const csvData = convertToCSV(record.content, canvasCount, selectedChannels, record.meta);
         zip.file(record.filename, csvData);
       } catch (error) {
         console.error(`Error processing record ${record.filename}:`, error);
@@ -294,7 +363,7 @@ const saveDataByFilename = async (
     }
 
     try {
-      const csvData = convertToCSV(record.content, canvasCount, selectedChannels);
+      const csvData = convertToCSV(record.content, canvasCount, selectedChannels, record.meta);
       const blob = new Blob([csvData], { type: "text/csv;charset=utf-8" });
       return blob;
     } catch (conversionError) {
