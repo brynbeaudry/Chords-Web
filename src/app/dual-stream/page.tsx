@@ -11,7 +11,7 @@ import { saveAs } from "file-saver";
 import { WebglPlot, ColorRGBA, WebglLine } from "webgl-plot";
 import Navbar from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
-import { EXGFilter, Notch, HighPassFilter, BandpassFilter, BandType } from '@/components/filters';
+import { EXGFilter, Notch, HighPassFilter, BandpassFilter, BandPowerEnvelope, BandType } from '@/components/filters';
 import {
     Popover,
     PopoverContent,
@@ -202,6 +202,56 @@ const DualStream = () => {
         delta: '#FF00FF',
     };
 
+    // ─── Predominance detection state ───────────────────────────────
+    interface DetectionParams {
+        dominance: number;
+        margin: number;
+        minRunFrac: number;
+        emaMs: number;
+        noiseFloor: number;
+    }
+    const DEFAULT_DETECTION_PARAMS: DetectionParams = {
+        dominance: 0.5,
+        margin: 0.15,
+        minRunFrac: 0.12,
+        emaMs: 500,
+        noiseFloor: 1e-6,
+    };
+    interface BandDetectionState {
+        is_alpha: boolean;
+        is_theta: boolean;
+        is_delta: boolean;
+        runStart: number;
+        runEnd: number;
+        runBand: BandType | null;
+    }
+    const emptyBandState: BandDetectionState = {
+        is_alpha: false, is_theta: false, is_delta: false,
+        runStart: -1, runEnd: -1, runBand: null,
+    };
+
+    const d1DetectionBandsRef = useRef<{ [channel: number]: Set<BandType> }>({});
+    const d2DetectionBandsRef = useRef<{ [channel: number]: Set<BandType> }>({});
+    const d1DetectionParamsRef = useRef<{ [channel: number]: DetectionParams }>({});
+    const d2DetectionParamsRef = useRef<{ [channel: number]: DetectionParams }>({});
+    const d1BandEnvelopesRef = useRef<Map<BandType, BandPowerEnvelope[]>>(new Map([
+        ['alpha', Array.from({ length: 3 }, () => new BandPowerEnvelope('alpha'))],
+        ['theta', Array.from({ length: 3 }, () => new BandPowerEnvelope('theta'))],
+        ['delta', Array.from({ length: 3 }, () => new BandPowerEnvelope('delta'))],
+    ]));
+    const d2BandEnvelopesRef = useRef<Map<BandType, BandPowerEnvelope[]>>(new Map([
+        ['alpha', Array.from({ length: 3 }, () => new BandPowerEnvelope('alpha'))],
+        ['theta', Array.from({ length: 3 }, () => new BandPowerEnvelope('theta'))],
+        ['delta', Array.from({ length: 3 }, () => new BandPowerEnvelope('delta'))],
+    ]));
+    // Label rings — 0=none, 1=alpha, 2=theta, 3=delta. Length = dataPointCount per channel.
+    const d1LabelRingsRef = useRef<Uint8Array[]>([]);
+    const d2LabelRingsRef = useRef<Uint8Array[]>([]);
+    const d1LabelSweepRef = useRef<number[]>(new Array(3).fill(0));
+    const d2LabelSweepRef = useRef<number[]>(new Array(3).fill(0));
+    const d1BandStateRef = useRef<{ [channel: number]: BandDetectionState }>({});
+    const d2BandStateRef = useRef<{ [channel: number]: BandDetectionState }>({});
+
     // ─── WebSocket / TouchDesigner state ────────────────────────────
     const streamerRef = useRef<WebSocketStreamer | null>(null);
     const [isTDConnected, setIsTDConnected] = useState(false);
@@ -230,12 +280,30 @@ const DualStream = () => {
         filters.forEach((f) => f.setSamplingRate(samplingrateref.current));
     }
 
+    // Band-power envelope init (mirrors band filter init above)
+    for (const envs of d1BandEnvelopesRef.current.values()) {
+        envs.forEach((e) => e.setSamplingRate(samplingrateref.current));
+    }
+    for (const envs of d2BandEnvelopesRef.current.values()) {
+        envs.forEach((e) => e.setSamplingRate(samplingrateref.current));
+    }
+
     // ─── Zoom / timeBase refs ───────────────────────────────────────
     const zoomRef = useRef(Zoom);
     useEffect(() => { zoomRef.current = Zoom; }, [Zoom]);
     useEffect(() => { dataPointCountRef.current = samplingrateref.current * timeBase; }, [timeBase]);
     useEffect(() => { selectedChannelsRef.current = selectedChannels; }, [selectedChannels]);
     useEffect(() => { canvasElementCountRef.current = selectedChannels.length; }, [selectedChannels]);
+
+    // Rebuild label rings whenever timeBase (i.e. visible window) changes.
+    // Stage C scans these rings to find the longest dominant run.
+    useEffect(() => {
+        const dp = samplingrateref.current * timeBase;
+        d1LabelRingsRef.current = Array.from({ length: numChannels }, () => new Uint8Array(dp));
+        d2LabelRingsRef.current = Array.from({ length: numChannels }, () => new Uint8Array(dp));
+        d1LabelSweepRef.current = new Array(numChannels).fill(0);
+        d2LabelSweepRef.current = new Array(numChannels).fill(0);
+    }, [timeBase]);
 
     // ─── Filter state & UI helpers ──────────────────────────────────
     const [, forceUpdate] = React.useReducer((x: number) => x + 1, 0);
@@ -315,7 +383,22 @@ const DualStream = () => {
         }
     };
 
+    // Wipe the WebGL band line for a (slot, channel, band) so disabling actually clears the chart.
+    const clearBandLine = (band: BandType, channelIndex: number) => {
+        const channelNumber = channelIndex + 1;
+        for (const slot of [1, 2] as const) {
+            const bandLinesArr = slot === 1 ? d1BandLinesRef : d2BandLinesRef;
+            const selIdx = selectedChannelsRef.current.indexOf(channelNumber);
+            if (selIdx < 0) continue;
+            const bandMap = bandLinesArr.current[selIdx];
+            const bLine = bandMap?.[band];
+            if (!bLine) continue;
+            for (let p = 0; p < bLine.numPoints; p++) bLine.setY(p, NaN);
+        }
+    };
+
     const toggleBand = (channelIndex: number, band: BandType) => {
+        const wasEnabled = d1EnabledBandsRef.current[channelIndex]?.has(band);
         for (const ref of [d1EnabledBandsRef, d2EnabledBandsRef]) {
             if (!ref.current[channelIndex]) ref.current[channelIndex] = new Set();
             if (ref.current[channelIndex].has(band)) {
@@ -324,9 +407,11 @@ const DualStream = () => {
                 ref.current[channelIndex].add(band);
             }
         }
-        // Ensure the WebGL line exists when enabling
+        // Ensure the WebGL line exists when enabling; clear it when disabling.
         if (d1EnabledBandsRef.current[channelIndex]?.has(band)) {
             ensureBandLine(band, channelIndex);
+        } else if (wasEnabled) {
+            clearBandLine(band, channelIndex);
         }
         updateLegends();
         forceUpdate();
@@ -346,13 +431,116 @@ const DualStream = () => {
                 }
             }
         }
-        // Ensure WebGL lines exist when enabling
         if (!allHave) {
+            // Just enabled — ensure lines
             for (let i = 0; i < numChannels; i++) {
                 ensureBandLine(band, i);
             }
+        } else {
+            // Just disabled — clear lines so stale samples don't sit on the chart
+            for (let i = 0; i < numChannels; i++) {
+                clearBandLine(band, i);
+            }
         }
         updateLegends();
+        forceUpdate();
+    };
+
+    // ─── Detection band toggles + params ────────────────────────────
+    const getDetectionParams = (channelIndex: number, slot: 1 | 2): DetectionParams => {
+        const ref = slot === 1 ? d1DetectionParamsRef : d2DetectionParamsRef;
+        if (!ref.current[channelIndex]) ref.current[channelIndex] = { ...DEFAULT_DETECTION_PARAMS };
+        return ref.current[channelIndex];
+    };
+
+    const syncEnvelopeEma = (channelIndex: number, slot: 1 | 2) => {
+        const params = getDetectionParams(channelIndex, slot);
+        const envsMap = slot === 1 ? d1BandEnvelopesRef : d2BandEnvelopesRef;
+        for (const envs of envsMap.current.values()) {
+            envs[channelIndex]?.setEmaMs(params.emaMs);
+        }
+    };
+
+    const clearHighlight = (channelIndex: number) => {
+        const channelNumber = channelIndex + 1;
+        for (const slot of [1, 2] as const) {
+            const el = document.getElementById(`highlight-d${slot}-ch${channelNumber}`);
+            if (el) el.style.display = 'none';
+        }
+    };
+
+    const toggleDetectionBand = (channelIndex: number, band: BandType) => {
+        for (const slot of [1, 2] as const) {
+            const ref = slot === 1 ? d1DetectionBandsRef : d2DetectionBandsRef;
+            if (!ref.current[channelIndex]) ref.current[channelIndex] = new Set();
+            if (ref.current[channelIndex].has(band)) {
+                ref.current[channelIndex].delete(band);
+            } else {
+                ref.current[channelIndex].add(band);
+                getDetectionParams(channelIndex, slot);
+                syncEnvelopeEma(channelIndex, slot);
+            }
+        }
+        // If detection just went empty for this channel, clear its state + ring + highlight
+        const d1Empty = !d1DetectionBandsRef.current[channelIndex]?.size;
+        const d2Empty = !d2DetectionBandsRef.current[channelIndex]?.size;
+        if (d1Empty) d1BandStateRef.current[channelIndex] = { ...emptyBandState };
+        if (d2Empty) d2BandStateRef.current[channelIndex] = { ...emptyBandState };
+        if (d1Empty && d2Empty) {
+            const r1 = d1LabelRingsRef.current[channelIndex];
+            const r2 = d2LabelRingsRef.current[channelIndex];
+            if (r1) r1.fill(0);
+            if (r2) r2.fill(0);
+            clearHighlight(channelIndex);
+            streamerRef.current?.clearDevice1BandState(channelIndex);
+            streamerRef.current?.clearDevice2BandState(channelIndex);
+        }
+        forceUpdate();
+    };
+
+    const allHaveDetectionBand = (band: BandType) =>
+        Array.from({ length: numChannels }, (_, i) => i).every(
+            (i) => d1DetectionBandsRef.current[i]?.has(band)
+        );
+
+    const toggleDetectionBandAllChannels = (band: BandType) => {
+        const allHave = allHaveDetectionBand(band);
+        for (let i = 0; i < numChannels; i++) {
+            for (const slot of [1, 2] as const) {
+                const ref = slot === 1 ? d1DetectionBandsRef : d2DetectionBandsRef;
+                if (!ref.current[i]) ref.current[i] = new Set();
+                if (allHave) {
+                    ref.current[i].delete(band);
+                } else {
+                    ref.current[i].add(band);
+                    getDetectionParams(i, slot);
+                    syncEnvelopeEma(i, slot);
+                }
+            }
+            // Clear state/ring/highlight for any channel whose set just went empty
+            const d1Empty = !d1DetectionBandsRef.current[i]?.size;
+            const d2Empty = !d2DetectionBandsRef.current[i]?.size;
+            if (d1Empty) d1BandStateRef.current[i] = { ...emptyBandState };
+            if (d2Empty) d2BandStateRef.current[i] = { ...emptyBandState };
+            if (d1Empty && d2Empty) {
+                const r1 = d1LabelRingsRef.current[i];
+                const r2 = d2LabelRingsRef.current[i];
+                if (r1) r1.fill(0);
+                if (r2) r2.fill(0);
+                clearHighlight(i);
+                streamerRef.current?.clearDevice1BandState(i);
+                streamerRef.current?.clearDevice2BandState(i);
+            }
+        }
+        forceUpdate();
+    };
+
+    const setDetectionParam = (channelIndex: number, key: keyof DetectionParams, value: number) => {
+        for (const slot of [1, 2] as const) {
+            const p = getDetectionParams(channelIndex, slot);
+            p[key] = value;
+            if (key === 'emaMs') syncEnvelopeEma(channelIndex, slot);
+        }
         forceUpdate();
     };
 
@@ -499,9 +687,22 @@ const DualStream = () => {
             legend.className = "absolute top-1 right-8 flex gap-2 text-xs z-10";
             legend.id = `legend-d${slot}-ch${channelNumber}`;
 
+            // Predominance-detection highlight rectangle. Stage C positions / shows it per frame.
+            // z-5 puts it above the canvas (z=auto) but below the legend (z-10) and pointer-events-none
+            // so it never intercepts clicks.
+            const highlight = document.createElement("div");
+            highlight.id = `highlight-d${slot}-ch${channelNumber}`;
+            highlight.className = "absolute top-0 bottom-0 pointer-events-none";
+            highlight.style.display = "none";
+            highlight.style.left = "0";
+            highlight.style.width = "0";
+            highlight.style.zIndex = "5";
+            highlight.style.background = "transparent";
+
+            wrapper.appendChild(canvas);
+            wrapper.appendChild(highlight);
             wrapper.appendChild(badge);
             wrapper.appendChild(legend);
-            wrapper.appendChild(canvas);
             container.appendChild(wrapper);
 
             newCanvasElements.push(canvas);
@@ -629,6 +830,11 @@ const DualStream = () => {
         const bandFiltersMap = slot === 1 ? d1BandFiltersRef : d2BandFiltersRef;
         const enabledBandsRef = slot === 1 ? d1EnabledBandsRef : d2EnabledBandsRef;
         const bandDataRef = slot === 1 ? d1BandDataRef : d2BandDataRef;
+        const bandEnvelopesMap = slot === 1 ? d1BandEnvelopesRef : d2BandEnvelopesRef;
+        const detectionBandsRef = slot === 1 ? d1DetectionBandsRef : d2DetectionBandsRef;
+        const detectionParamsRef = slot === 1 ? d1DetectionParamsRef : d2DetectionParamsRef;
+        const labelRingsRef = slot === 1 ? d1LabelRingsRef : d2LabelRingsRef;
+        const labelSweepRef = slot === 1 ? d1LabelSweepRef : d2LabelSweepRef;
         const samplesReceived = slot === 1 ? d1SamplesReceivedRef : d2SamplesReceivedRef;
         const activeBufferIdx = slot === 1 ? d1ActiveBufferIndex : d2ActiveBufferIndex;
         const fillingIdx = slot === 1 ? d1FillingIndex : d2FillingIndex;
@@ -664,7 +870,7 @@ const DualStream = () => {
             );
             channelDataRef.current.push(filteredValue);
 
-            // Band filtering — feed HP-filtered signal (before EXG yScale)
+            // Overlay band filtering — feed HP-filtered signal (before EXG yScale)
             const enabledBands = enabledBandsRef.current[channel];
             if (enabledBands && enabledBands.size > 0) {
                 for (const band of enabledBands) {
@@ -672,6 +878,41 @@ const DualStream = () => {
                     const bandValue = filter.process(hpOutput) * ADC_Y_SCALE;
                     if (!bandDataRef.current[band]) bandDataRef.current[band] = [0, 0, 0];
                     bandDataRef.current[band][channel] = bandValue;
+                }
+            }
+
+            // Predominance detection — independent of overlay. Runs all three envelopes
+            // (need all three powers for the ratio), then classifies the sample.
+            const detectionBands = detectionBandsRef.current[channel];
+            if (detectionBands && detectionBands.size > 0) {
+                let pAlpha = 0, pTheta = 0, pDelta = 0;
+                for (const band of ['alpha', 'theta', 'delta'] as BandType[]) {
+                    const env = bandEnvelopesMap.current.get(band)![channel];
+                    env.process(hpOutput);
+                    const p = env.getPower();
+                    if (band === 'alpha') pAlpha = p;
+                    else if (band === 'theta') pTheta = p;
+                    else pDelta = p;
+                }
+                const total = pAlpha + pTheta + pDelta;
+                const params = detectionParamsRef.current[channel] ?? DEFAULT_DETECTION_PARAMS;
+                let label: 0 | 1 | 2 | 3 = 0;
+                if (total >= params.noiseFloor) {
+                    const rA = pAlpha / total;
+                    const rT = pTheta / total;
+                    const rD = pDelta / total;
+                    const dom = params.dominance;
+                    const mar = params.margin;
+                    if (detectionBands.has('alpha') && rA >= dom && rA - Math.max(rT, rD) >= mar) label = 1;
+                    else if (detectionBands.has('theta') && rT >= dom && rT - Math.max(rA, rD) >= mar) label = 2;
+                    else if (detectionBands.has('delta') && rD >= dom && rD - Math.max(rA, rT) >= mar) label = 3;
+                }
+                const ring = labelRingsRef.current[channel];
+                if (ring && ring.length > 0) {
+                    const pos = labelSweepRef.current[channel] % ring.length;
+                    ring[pos] = label;
+                    ring[(pos + 1) % ring.length] = 0;
+                    labelSweepRef.current[channel] = (pos + 1) % ring.length;
                 }
             }
         }
@@ -711,6 +952,17 @@ const DualStream = () => {
                     if (slot === 1) streamerRef.current.setDevice1BandData(band, vals);
                     else streamerRef.current.setDevice2BandData(band, vals);
                 }
+            }
+
+            // Send predominance-detection booleans (Stage C updates these once per rAF)
+            const bandStateRef = slot === 1 ? d1BandStateRef : d2BandStateRef;
+            for (let ch = 0; ch < numChannels; ch++) {
+                if (!detectionBandsRef.current[ch] || detectionBandsRef.current[ch].size === 0) continue;
+                const st = bandStateRef.current[ch];
+                if (!st) continue;
+                const payload = { is_alpha: st.is_alpha, is_theta: st.is_theta, is_delta: st.is_delta };
+                if (slot === 1) streamerRef.current.setDevice1BandState(ch, payload);
+                else streamerRef.current.setDevice2BandState(ch, payload);
             }
         }
 
@@ -1140,11 +1392,111 @@ const DualStream = () => {
         setIsAllEnabledChannelSelected(allSelected);
     }, [selectedChannels, maxCanvasElementCountRef.current, manuallySelected]);
 
+    // Stage C — scan a label ring for the longest contiguous non-none run.
+    // Returns the run's band code (1/2/3), start index, and end index, or { code: 0 } if none.
+    const scanLongestRun = (ring: Uint8Array): { code: number; start: number; end: number; length: number } => {
+        const N = ring.length;
+        let bestCode = 0, bestStart = -1, bestEnd = -1, bestLen = 0;
+        // Find any non-zero starting position to anchor the scan (handles wrap-around).
+        // Simpler approach: scan twice — concatenate the ring with itself logically, but bail
+        // out once we've covered N samples.
+        let i = 0;
+        while (i < N) {
+            const v = ring[i];
+            if (v === 0) { i++; continue; }
+            // Walk forward across this run, wrapping around once if it spans the boundary
+            let j = i;
+            let len = 0;
+            while (len < N) {
+                const idx = (j) % N;
+                if (ring[idx] !== v) break;
+                len++;
+                j++;
+            }
+            if (len > bestLen) {
+                bestLen = len;
+                bestCode = v;
+                bestStart = i % N;
+                bestEnd = (j - 1) % N;
+            }
+            i = j;
+        }
+        return { code: bestCode, start: bestStart, end: bestEnd, length: bestLen };
+    };
+
+    const BAND_CODE_TO_NAME: Record<number, BandType | null> = { 1: 'alpha', 2: 'theta', 3: 'delta', 0: null };
+
+    const runStageC = (slot: 1 | 2) => {
+        const detectionBandsRef = slot === 1 ? d1DetectionBandsRef : d2DetectionBandsRef;
+        const detectionParamsRef = slot === 1 ? d1DetectionParamsRef : d2DetectionParamsRef;
+        const labelRingsRef = slot === 1 ? d1LabelRingsRef : d2LabelRingsRef;
+        const bandStateRef = slot === 1 ? d1BandStateRef : d2BandStateRef;
+
+        for (let ch = 0; ch < numChannels; ch++) {
+            const detection = detectionBandsRef.current[ch];
+            const channelNumber = ch + 1;
+            const highlightEl = document.getElementById(`highlight-d${slot}-ch${channelNumber}`) as HTMLDivElement | null;
+
+            if (!detection || detection.size === 0) {
+                if (highlightEl) highlightEl.style.display = 'none';
+                continue;
+            }
+            const ring = labelRingsRef.current[ch];
+            if (!ring || ring.length === 0) {
+                if (highlightEl) highlightEl.style.display = 'none';
+                continue;
+            }
+            const params = detectionParamsRef.current[ch] ?? DEFAULT_DETECTION_PARAMS;
+            const minRunSamples = Math.max(1, Math.floor(params.minRunFrac * ring.length));
+            const result = scanLongestRun(ring);
+
+            const state: BandDetectionState = { ...emptyBandState };
+            if (result.length >= minRunSamples) {
+                const band = BAND_CODE_TO_NAME[result.code];
+                if (band) {
+                    if (band === 'alpha') state.is_alpha = true;
+                    else if (band === 'theta') state.is_theta = true;
+                    else if (band === 'delta') state.is_delta = true;
+                    state.runStart = result.start;
+                    state.runEnd = result.end;
+                    state.runBand = band;
+                }
+            }
+            bandStateRef.current[ch] = state;
+
+            // Position the highlight overlay
+            if (highlightEl) {
+                if (state.runBand && state.runStart >= 0 && state.runEnd >= 0) {
+                    const N = ring.length;
+                    const startFrac = state.runStart / N;
+                    let endFrac = (state.runEnd + 1) / N;
+                    let widthFrac: number;
+                    if (state.runEnd >= state.runStart) {
+                        widthFrac = endFrac - startFrac;
+                    } else {
+                        // Run wraps across the ring boundary — show as a single block from start to end of canvas.
+                        // (Visually approximate; the wrap happens at the sweep cursor which is itself moving.)
+                        widthFrac = (N - state.runStart + state.runEnd + 1) / N;
+                    }
+                    highlightEl.style.display = 'block';
+                    highlightEl.style.left = `${(startFrac * 100).toFixed(3)}%`;
+                    highlightEl.style.width = `${(Math.min(1, widthFrac) * 100).toFixed(3)}%`;
+                    const color = BAND_COLORS[state.runBand];
+                    highlightEl.style.background = `${color}33`; // ~20% alpha
+                } else {
+                    highlightEl.style.display = 'none';
+                }
+            }
+        }
+    };
+
     // Animation loop — renders BOTH devices
     const animate = useCallback(() => {
         if (pauseRef.current) {
             d1WglPlots.forEach((wglp) => wglp.update());
             d2WglPlots.forEach((wglp) => wglp.update());
+            runStageC(1);
+            runStageC(2);
             requestAnimationFrame(animate);
         }
     }, [d1WglPlots, d2WglPlots]);
@@ -1553,11 +1905,11 @@ const DualStream = () => {
                                     <Activity size={16} /> Bands
                                 </Button>
                             </PopoverTrigger>
-                            <PopoverContent className="w-72 p-4 mx-4 mb-2">
-                                <div className="flex flex-col max-h-80 overflow-y-auto">
+                            <PopoverContent className="w-80 p-4 mx-4 mb-2">
+                                <div className="flex flex-col max-h-[28rem] overflow-y-auto">
                                     {/* All channels row */}
                                     <div className="flex items-center pb-2">
-                                        <div className="text-sm font-semibold w-12"><ReplaceAll size={20} /></div>
+                                        <div className="text-sm font-semibold w-20">Overlay all</div>
                                         <div className="flex space-x-1">
                                             {(['alpha', 'theta', 'delta'] as BandType[]).map(band => (
                                                 <Button key={band} variant="outline" size="sm"
@@ -1569,33 +1921,111 @@ const DualStream = () => {
                                             ))}
                                         </div>
                                     </div>
-                                    {/* Per-channel rows */}
-                                    {channelNames.map((name, index) => (
-                                        <div key={name} className="flex flex-col space-y-1 py-1">
-                                            <div className="flex items-center">
-                                                <div className="text-sm font-semibold w-12">{name}</div>
-                                                <div className="flex space-x-1">
-                                                    {(['alpha', 'theta', 'delta'] as BandType[]).map(band => (
-                                                        <Button key={band} variant="outline" size="sm"
-                                                            onClick={() => toggleBand(index, band)}
-                                                            style={d1EnabledBandsRef.current[index]?.has(band) ? { backgroundColor: BAND_COLORS[band], color: '#000' } : {}}
-                                                            className="rounded-xl text-xs">
-                                                            {band.charAt(0).toUpperCase() + band.slice(1)}
-                                                        </Button>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                            {/* Per-channel gain slider */}
-                                            <div className="flex items-center pl-12">
-                                                <span className="text-xs text-gray-500 w-10">Gain:</span>
-                                                <input type="range" min="1" max="10" step="0.5"
-                                                    value={d1BandGainRef.current[index] ?? 3}
-                                                    onChange={(e) => setBandGain(index, Number(e.target.value))}
-                                                    className="flex-1 h-[0.15rem]" />
-                                                <span className="text-xs ml-1 w-8">{(d1BandGainRef.current[index] ?? 3).toFixed(1)}x</span>
-                                            </div>
+                                    <div className="flex items-center pb-2">
+                                        <div className="text-sm font-semibold w-20">Detect all</div>
+                                        <div className="flex space-x-1">
+                                            {(['alpha', 'theta', 'delta'] as BandType[]).map(band => (
+                                                <Button key={band} variant="outline" size="sm"
+                                                    onClick={() => toggleDetectionBandAllChannels(band)}
+                                                    style={allHaveDetectionBand(band) ? { backgroundColor: BAND_COLORS[band], color: '#000', outline: '2px solid #fff' } : {}}
+                                                    className="rounded-xl text-xs">
+                                                    {band.charAt(0).toUpperCase() + band.slice(1)}
+                                                </Button>
+                                            ))}
                                         </div>
-                                    ))}
+                                    </div>
+                                    {/* Per-channel rows */}
+                                    {channelNames.map((name, index) => {
+                                        const params = d1DetectionParamsRef.current[index] ?? DEFAULT_DETECTION_PARAMS;
+                                        const detectionOn = (d1DetectionBandsRef.current[index]?.size ?? 0) > 0;
+                                        return (
+                                            <div key={name} className="flex flex-col space-y-1 py-2 border-t border-gray-200 dark:border-gray-700">
+                                                <div className="text-sm font-semibold">{name}</div>
+                                                {/* Overlay row */}
+                                                <div className="flex items-center pl-2">
+                                                    <span className="text-xs text-gray-500 w-16">Overlay:</span>
+                                                    <div className="flex space-x-1">
+                                                        {(['alpha', 'theta', 'delta'] as BandType[]).map(band => (
+                                                            <Button key={band} variant="outline" size="sm"
+                                                                onClick={() => toggleBand(index, band)}
+                                                                style={d1EnabledBandsRef.current[index]?.has(band) ? { backgroundColor: BAND_COLORS[band], color: '#000' } : {}}
+                                                                className="rounded-xl text-xs">
+                                                                {band.charAt(0).toUpperCase() + band.slice(1)}
+                                                            </Button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                                {/* Detection row */}
+                                                <div className="flex items-center pl-2">
+                                                    <span className="text-xs text-gray-500 w-16">Detect:</span>
+                                                    <div className="flex space-x-1">
+                                                        {(['alpha', 'theta', 'delta'] as BandType[]).map(band => (
+                                                            <Button key={band} variant="outline" size="sm"
+                                                                onClick={() => toggleDetectionBand(index, band)}
+                                                                style={d1DetectionBandsRef.current[index]?.has(band) ? { backgroundColor: BAND_COLORS[band], color: '#000', outline: '2px solid #fff' } : {}}
+                                                                className="rounded-xl text-xs">
+                                                                {band.charAt(0).toUpperCase() + band.slice(1)}
+                                                            </Button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                                {/* Gain slider */}
+                                                <div className="flex items-center pl-2">
+                                                    <span className="text-xs text-gray-500 w-16">Gain:</span>
+                                                    <input type="range" min="1" max="10" step="0.5"
+                                                        value={d1BandGainRef.current[index] ?? 3}
+                                                        onChange={(e) => setBandGain(index, Number(e.target.value))}
+                                                        className="flex-1 h-[0.15rem]" />
+                                                    <span className="text-xs ml-1 w-10 text-right">{(d1BandGainRef.current[index] ?? 3).toFixed(1)}x</span>
+                                                </div>
+                                                {/* Detection sensitivity sliders — only when detection is active */}
+                                                {detectionOn && (
+                                                    <div className="pl-2 pt-1 space-y-1">
+                                                        <div className="flex items-center">
+                                                            <span className="text-xs text-gray-500 w-20">Dominance:</span>
+                                                            <input type="range" min="0.34" max="0.9" step="0.01"
+                                                                value={params.dominance}
+                                                                onChange={(e) => setDetectionParam(index, 'dominance', Number(e.target.value))}
+                                                                className="flex-1 h-[0.15rem]" />
+                                                            <span className="text-xs ml-1 w-10 text-right">{params.dominance.toFixed(2)}</span>
+                                                        </div>
+                                                        <div className="flex items-center">
+                                                            <span className="text-xs text-gray-500 w-20">Margin:</span>
+                                                            <input type="range" min="0" max="0.5" step="0.01"
+                                                                value={params.margin}
+                                                                onChange={(e) => setDetectionParam(index, 'margin', Number(e.target.value))}
+                                                                className="flex-1 h-[0.15rem]" />
+                                                            <span className="text-xs ml-1 w-10 text-right">{params.margin.toFixed(2)}</span>
+                                                        </div>
+                                                        <div className="flex items-center">
+                                                            <span className="text-xs text-gray-500 w-20">Min run:</span>
+                                                            <input type="range" min="0.02" max="0.5" step="0.01"
+                                                                value={params.minRunFrac}
+                                                                onChange={(e) => setDetectionParam(index, 'minRunFrac', Number(e.target.value))}
+                                                                className="flex-1 h-[0.15rem]" />
+                                                            <span className="text-xs ml-1 w-10 text-right">{Math.round(params.minRunFrac * 100)}%</span>
+                                                        </div>
+                                                        <div className="flex items-center">
+                                                            <span className="text-xs text-gray-500 w-20">Smoothing:</span>
+                                                            <input type="range" min="100" max="2000" step="50"
+                                                                value={params.emaMs}
+                                                                onChange={(e) => setDetectionParam(index, 'emaMs', Number(e.target.value))}
+                                                                className="flex-1 h-[0.15rem]" />
+                                                            <span className="text-xs ml-1 w-10 text-right">{params.emaMs}ms</span>
+                                                        </div>
+                                                        <div className="flex items-center">
+                                                            <span className="text-xs text-gray-500 w-20">Noise floor:</span>
+                                                            <input type="range" min="-9" max="-3" step="0.1"
+                                                                value={Math.log10(params.noiseFloor)}
+                                                                onChange={(e) => setDetectionParam(index, 'noiseFloor', Math.pow(10, Number(e.target.value)))}
+                                                                className="flex-1 h-[0.15rem]" />
+                                                            <span className="text-xs ml-1 w-10 text-right">{params.noiseFloor.toExponential(0)}</span>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             </PopoverContent>
                         </Popover>

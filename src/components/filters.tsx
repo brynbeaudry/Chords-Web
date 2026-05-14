@@ -324,6 +324,53 @@ export class BandpassFilter {
     }
 }
 
+// Smoothed band-power envelope: a BandpassFilter feeding a single-pole EMA on the
+// squared output. Used by per-channel predominance detection (alpha/theta/delta).
+export class BandPowerEnvelope {
+    private filter: BandpassFilter;
+    private power = 0;
+    private alpha = 0.004;
+    private emaMs = 500;
+    private samplingRate = 0;
+    private lastSignal = 0;
+
+    constructor(band: BandType) {
+        this.filter = new BandpassFilter(band);
+    }
+
+    setSamplingRate(rate: number): void {
+        if (this.samplingRate !== rate) {
+            this.power = 0;
+            this.lastSignal = 0;
+        }
+        this.filter.setSamplingRate(rate);
+        this.samplingRate = rate;
+        this.recomputeAlpha();
+    }
+
+    setEmaMs(ms: number): void {
+        this.emaMs = ms;
+        this.recomputeAlpha();
+    }
+
+    private recomputeAlpha(): void {
+        if (this.samplingRate > 0 && this.emaMs > 0) {
+            const a = 1 / ((this.emaMs / 1000) * this.samplingRate);
+            this.alpha = Math.min(1, Math.max(0, a));
+        }
+    }
+
+    process(input: number): number {
+        const v = this.filter.process(input);
+        this.lastSignal = v;
+        this.power = (1 - this.alpha) * this.power + this.alpha * (v * v);
+        return v;
+    }
+
+    getPower(): number { return this.power; }
+    getSignal(): number { return this.lastSignal; }
+}
+
 export class Notch {
     // Properties to hold the state of the filter sections
     private z1_1: number;
