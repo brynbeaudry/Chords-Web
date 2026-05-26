@@ -284,9 +284,9 @@ flowchart LR
     file["Saved CSV<br/>(IndexedDB record)"] --> load[loadRecording]
     load --> rows["rows: [slot,tWall,...,filtered] × N"]
     rows --> sort["Sort by tWallMs (stable)"]
-    sort --> pace["replayLoop:<br/>per rAF, drain rows where tWall ≤ replayClock"]
+    sort --> pace["drainReplay:<br/>per worker tick (~125 Hz), drain rows where tWall ≤ replayClock"]
     pace --> ingest["ingestRow(row)<br/>→ ingestSample(slot, counter, raw, tWall)"]
-    ingest --> shared["── shared pipeline ──<br/>HP → EXG → Notch → canvas<br/>band envelopes + label ring<br/>Stage C (per rAF)<br/>WebSocket send"]
+    ingest --> shared["── shared pipeline ──<br/>HP → EXG → Notch → canvas<br/>band envelopes + label ring<br/>Stage C (per worker tick — live & replay)<br/>WebSocket send"]
     shared --> canvas[Canvas in UI<br/>shows the replayed signal]
     shared --> td[(TouchDesigner WS)]
     pace -- "speed slider 1x/2x/0.5x" --> pace
@@ -329,6 +329,16 @@ const replayLoop = () => {
 - The user can re-tune detection params against a file post-hoc.
 
 This is the "recompute" model. To support "faithful" (TD sees exactly what it saw live), `ingestSample` would need an optional path that skips the filter chain and pushes the recorded filtered values directly to the streamer — out of scope for v1.
+
+> **Update (implemented): a Web Worker drives the pipeline clock for BOTH live and replay, not `requestAnimationFrame`.**
+>
+> The original design (approach 2 above) drove the drain loop with `requestAnimationFrame`. The browser **pauses rAF whenever the tab is hidden or the window is occluded** — which is exactly what happens when the user brings TouchDesigner to the foreground. Result: the drain loop froze, no rows were ingested, and the WebSocket feed to TD stopped until the browser regained focus (then fast-forwarded through the backlog in one burst).
+>
+> Fix: `replayLoop` is now `drainReplay`, driven by ticks from a dedicated worker (`workers/streamClockWorker.ts`) running `setInterval` at ~125 Hz. Worker timers are **not** subject to the main thread's background throttling, so playback keeps streaming to TD while the browser is backgrounded. The canvas render (`wglp.update()`) stays on rAF — there's no point drawing pixels nobody can see.
+>
+> **The same worker clock now runs in live mode too.** It's started/stopped by a `streamMode` effect (running whenever mode is `'live'` or `'replay'`, idle when `'off'`), and a `streamMode`-keyed dispatcher (`onStreamTickRef`) decides each tick's work: in **replay** it calls `drainReplay` (drain due rows + Stage C); in **live** it calls `runStageC(1/2)`. Stage C is therefore the *sole* responsibility of the worker clock in every mode — the rAF `animate` loop no longer runs Stage C at all (it only renders the canvas).
+>
+> This closes the live-mode gap: previously the `is_alpha/is_theta/is_delta` predominance flags ran on rAF and froze while the tab was hidden during a live session. Now they stay fresh and keep flowing to TD whether the source is live devices or a recording, backgrounded or not. (In live mode the raw/filtered channels and band magnitudes were never the problem — BLE notifications are event-driven, not rAF-throttled, so `ingestSample` and its WebSocket sends keep firing regardless. The worker tick is purely what keeps the Stage C verdicts alive alongside them.) The tick handler is bound through `onStreamTickRef`, refreshed each render, so the worker is created once yet always invokes the latest closures — no per-start rebinding, no stale state.
 
 ### Phase E — UI with mode mutex
 
@@ -396,7 +406,7 @@ const stopReplay = () => {
 The mutex is enforced in three places:
 
 1. **`processDeviceSample`** (`page.tsx:793`) — early-returns when `streamModeRef.current === 'replay'`. BLE notifications keep arriving (we don't disconnect the device) but they go nowhere. The user can flip back to Live without re-pairing.
-2. **`replayLoop`** — early-returns when `streamModeRef.current !== 'replay'`. If the user clicks Live mid-replay, the in-flight rAF tick exits cleanly.
+2. **`drainReplay`** (driven by the worker clock via `onStreamTickRef`) — early-returns when `streamModeRef.current !== 'replay'`. If the user clicks Live mid-replay, the in-flight tick exits cleanly and the dispatcher switches that tick's work to live Stage C.
 3. **The UI radio buttons** — disable the "Start replay" button when `streamMode === 'live'` (or wrap it in a confirm), and disable the device connect buttons when `streamMode === 'replay'`.
 
 ### What the canvas shows in each mode

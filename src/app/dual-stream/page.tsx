@@ -219,14 +219,12 @@ const DualStream = () => {
     };
     interface BandDetectionState {
         is_alpha: boolean;
-        is_theta: boolean;
-        is_delta: boolean;
         runStart: number;
         runEnd: number;
         runBand: BandType | null;
     }
     const emptyBandState: BandDetectionState = {
-        is_alpha: false, is_theta: false, is_delta: false,
+        is_alpha: false,
         runStart: -1, runEnd: -1, runBand: null,
     };
 
@@ -251,6 +249,58 @@ const DualStream = () => {
     const d2LabelSweepRef = useRef<number[]>(new Array(3).fill(0));
     const d1BandStateRef = useRef<{ [channel: number]: BandDetectionState }>({});
     const d2BandStateRef = useRef<{ [channel: number]: BandDetectionState }>({});
+
+    // ─── Alpha metric test harness (Phase 1 instrumentation) ─────────
+    // Independent alpha-region metrics that can each be toggled and combined (AND/OR).
+    // Evaluated per stream-clock tick in runStageC; the combined verdict drives the
+    // existing run-length highlight + is_alpha. See ALPHA_DETECTION_PLAN.md.
+    type CombineMode = 'AND' | 'OR';
+    interface AlphaMetricConfig {
+        rhythmicity: boolean;   // sustained ~10 Hz oscillation (autocorrelation)
+        relRise: boolean;       // alpha power risen above its own slow baseline
+        power: boolean;         // alpha power above an absolute floor
+        legacy: boolean;        // old alpha-vs-(theta+delta) ratio, for comparison
+        combine: CombineMode;
+        rhythmicityMin: number; // 0..1 normalized autocorrelation peak
+        relRiseMin: number;     // ratio threshold
+        powerMin: number;       // ADC counts^2 (uncalibrated)
+        baselineMs: number;     // slow baseline EMA window for relRise
+    }
+    const DEFAULT_ALPHA_METRICS: AlphaMetricConfig = {
+        rhythmicity: true, relRise: false, power: false, legacy: false,
+        combine: 'AND', rhythmicityMin: 0.4, relRiseMin: 1.8, powerMin: 50, baselineMs: 20000,
+    };
+    const ALPHA_SIG_WIN = 512; // rhythmicity autocorrelation window (samples)
+    const RHYTHM_EVERY = 8;    // recompute rhythmicity every Nth stream-clock tick
+    const [alphaMetrics, setAlphaMetrics] = useState<AlphaMetricConfig>(DEFAULT_ALPHA_METRICS);
+    const alphaMetricsRef = useRef<AlphaMetricConfig>(alphaMetrics);
+    useEffect(() => { alphaMetricsRef.current = alphaMetrics; }, [alphaMetrics]);
+    const setAlphaMetric = <K extends keyof AlphaMetricConfig>(key: K, value: AlphaMetricConfig[K]) =>
+        setAlphaMetrics((m) => ({ ...m, [key]: value } as AlphaMetricConfig));
+
+    type MetricVals = { rhythm: number; r2x: number; relRise: number; power: number; legacy: number; combined: boolean };
+    const emptyMetricVals = (): MetricVals => ({ rhythm: 0, r2x: 0, relRise: 0, power: 0, legacy: 0, combined: false });
+    const streamTickRef = useRef<number>(0);
+    const d1AlphaSigRef = useRef<Float32Array[]>([]);
+    const d2AlphaSigRef = useRef<Float32Array[]>([]);
+    const d1AlphaSigPosRef = useRef<number[]>([]);
+    const d2AlphaSigPosRef = useRef<number[]>([]);
+    const d1AlphaBaseRef = useRef<number[]>([]);
+    const d2AlphaBaseRef = useRef<number[]>([]);
+    const d1CombinedAlphaRef = useRef<boolean[]>([]);
+    const d2CombinedAlphaRef = useRef<boolean[]>([]);
+    const d1MetricValsRef = useRef<MetricVals[]>([]);
+    const d2MetricValsRef = useRef<MetricVals[]>([]);
+    const [metricReadout, setMetricReadout] = useState<{ d1: MetricVals[]; d2: MetricVals[] }>({ d1: [], d2: [] });
+    useEffect(() => {
+        const id = setInterval(() => {
+            setMetricReadout({
+                d1: d1MetricValsRef.current.map((v) => ({ ...v })),
+                d2: d2MetricValsRef.current.map((v) => ({ ...v })),
+            });
+        }, 200);
+        return () => clearInterval(id);
+    }, []);
 
     // ─── WebSocket / TouchDesigner state ────────────────────────────
     const streamerRef = useRef<WebSocketStreamer | null>(null);
@@ -303,6 +353,17 @@ const DualStream = () => {
         d2LabelRingsRef.current = Array.from({ length: numChannels }, () => new Uint8Array(dp));
         d1LabelSweepRef.current = new Array(numChannels).fill(0);
         d2LabelSweepRef.current = new Array(numChannels).fill(0);
+        // Alpha metric buffers (rhythmicity ring + slow baseline + verdict caches)
+        d1AlphaSigRef.current = Array.from({ length: numChannels }, () => new Float32Array(ALPHA_SIG_WIN));
+        d2AlphaSigRef.current = Array.from({ length: numChannels }, () => new Float32Array(ALPHA_SIG_WIN));
+        d1AlphaSigPosRef.current = new Array(numChannels).fill(0);
+        d2AlphaSigPosRef.current = new Array(numChannels).fill(0);
+        d1AlphaBaseRef.current = new Array(numChannels).fill(0);
+        d2AlphaBaseRef.current = new Array(numChannels).fill(0);
+        d1CombinedAlphaRef.current = new Array(numChannels).fill(false);
+        d2CombinedAlphaRef.current = new Array(numChannels).fill(false);
+        d1MetricValsRef.current = Array.from({ length: numChannels }, emptyMetricVals);
+        d2MetricValsRef.current = Array.from({ length: numChannels }, emptyMetricVals);
     }, [timeBase]);
 
     // ─── Filter state & UI helpers ──────────────────────────────────
@@ -687,7 +748,7 @@ const DualStream = () => {
             legend.className = "absolute top-1 right-8 flex gap-2 text-xs z-10";
             legend.id = `legend-d${slot}-ch${channelNumber}`;
 
-            // Predominance-detection highlight rectangle. Stage C positions / shows it per frame.
+            // Predominance-detection highlight rectangle. Stage C positions / shows it per stream-clock tick.
             // z-5 puts it above the canvas (z=auto) but below the legend (z-10) and pointer-events-none
             // so it never intercepts clicks.
             const highlight = document.createElement("div");
@@ -875,6 +936,10 @@ const DualStream = () => {
         const detectionParamsRef = slot === 1 ? d1DetectionParamsRef : d2DetectionParamsRef;
         const labelRingsRef = slot === 1 ? d1LabelRingsRef : d2LabelRingsRef;
         const labelSweepRef = slot === 1 ? d1LabelSweepRef : d2LabelSweepRef;
+        const alphaSigRef = slot === 1 ? d1AlphaSigRef : d2AlphaSigRef;
+        const alphaSigPosRef = slot === 1 ? d1AlphaSigPosRef : d2AlphaSigPosRef;
+        const alphaBaseRef = slot === 1 ? d1AlphaBaseRef : d2AlphaBaseRef;
+        const combinedAlphaRef = slot === 1 ? d1CombinedAlphaRef : d2CombinedAlphaRef;
         const samplesReceived = slot === 1 ? d1SamplesReceivedRef : d2SamplesReceivedRef;
         const activeBufferIdx = slot === 1 ? d1ActiveBufferIndex : d2ActiveBufferIndex;
         const fillingIdx = slot === 1 ? d1FillingIndex : d2FillingIndex;
@@ -907,34 +972,33 @@ const DualStream = () => {
                 }
             }
 
-            // Predominance detection — independent of overlay. Runs all three envelopes
-            // (need all three powers for the ratio), then classifies the sample.
+            // Alpha detection inputs. Metric evaluation + combine happens per stream-clock
+            // tick in runStageC; here we only (a) advance the band envelopes, (b) feed the
+            // alpha-band signal ring used for rhythmicity, (c) update the slow alpha-power
+            // baseline, and (d) stamp the label ring with the latest combined verdict so the
+            // existing run-length highlight keeps working.
             const detectionBands = detectionBandsRef.current[channel];
-            if (detectionBands && detectionBands.size > 0) {
-                let pAlpha = 0, pTheta = 0, pDelta = 0;
+            if (detectionBands && detectionBands.has('alpha')) {
                 for (const band of ['alpha', 'theta', 'delta'] as BandType[]) {
-                    const env = bandEnvelopesMap.current.get(band)![channel];
-                    env.process(hpOutput);
-                    const p = env.getPower();
-                    if (band === 'alpha') pAlpha = p;
-                    else if (band === 'theta') pTheta = p;
-                    else pDelta = p;
+                    bandEnvelopesMap.current.get(band)![channel].process(hpOutput);
                 }
-                const total = pAlpha + pTheta + pDelta;
-                const params = detectionParamsRef.current[channel] ?? DEFAULT_DETECTION_PARAMS;
-                let label: 0 | 1 | 2 | 3 = 0;
-                if (total >= params.noiseFloor) {
-                    const rA = pAlpha / total;
-                    const rT = pTheta / total;
-                    const rD = pDelta / total;
-                    const dom = params.dominance;
-                    const mar = params.margin;
-                    if (detectionBands.has('alpha') && rA >= dom && rA - Math.max(rT, rD) >= mar) label = 1;
-                    else if (detectionBands.has('theta') && rT >= dom && rT - Math.max(rA, rD) >= mar) label = 2;
-                    else if (detectionBands.has('delta') && rD >= dom && rD - Math.max(rA, rT) >= mar) label = 3;
+                const alphaEnv = bandEnvelopesMap.current.get('alpha')![channel];
+                const sig = alphaSigRef.current[channel];
+                if (sig && sig.length > 0) {
+                    const sp = alphaSigPosRef.current[channel] % sig.length;
+                    sig[sp] = alphaEnv.getSignal();
+                    alphaSigPosRef.current[channel] = (sp + 1) % sig.length;
                 }
+                const sr = samplingrateref.current || 500;
+                const baseMs = alphaMetricsRef.current.baselineMs;
+                const bc = baseMs > 0 ? Math.min(1, 1 / ((baseMs / 1000) * sr)) : 0.001;
+                const prevBase = alphaBaseRef.current[channel] ?? 0;
+                alphaBaseRef.current[channel] = prevBase > 0
+                    ? (1 - bc) * prevBase + bc * alphaEnv.getPower()
+                    : alphaEnv.getPower();
                 const ring = labelRingsRef.current[channel];
                 if (ring && ring.length > 0) {
+                    const label = combinedAlphaRef.current[channel] ? 1 : 0;
                     const pos = labelSweepRef.current[channel] % ring.length;
                     ring[pos] = label;
                     ring[(pos + 1) % ring.length] = 0;
@@ -980,13 +1044,14 @@ const DualStream = () => {
                 }
             }
 
-            // Send predominance-detection booleans (Stage C updates these once per rAF)
+            // Send predominance-detection booleans (Stage C refreshes these on the
+            // background-safe stream clock; see onStreamTickRef)
             const bandStateRef = slot === 1 ? d1BandStateRef : d2BandStateRef;
             for (let ch = 0; ch < numChannels; ch++) {
                 if (!detectionBandsRef.current[ch] || detectionBandsRef.current[ch].size === 0) continue;
                 const st = bandStateRef.current[ch];
                 if (!st) continue;
-                const payload = { is_alpha: st.is_alpha, is_theta: st.is_theta, is_delta: st.is_delta };
+                const payload = { is_alpha: st.is_alpha };
                 if (slot === 1) streamerRef.current.setDevice1BandState(ch, payload);
                 else streamerRef.current.setDevice2BandState(ch, payload);
             }
@@ -1366,6 +1431,17 @@ const DualStream = () => {
     const replaySpeedRef = useRef<number>(1);
     const replayPausedRef = useRef<boolean>(false);
     const replayMetaRef = useRef<ReplayMeta | null>(null);
+    // Background-safe stream clock: a worker emits steady ticks even when the tab
+    // is hidden/occluded (e.g. TouchDesigner in the foreground), where rAF is
+    // paused. Drives replay row-draining and Stage C in BOTH live and replay, so
+    // the is_alpha predominance flag keeps reaching
+    // TouchDesigner while backgrounded. See workers/streamClockWorker.ts.
+    const streamClockRef = useRef<Worker | null>(null);
+    // Tick handler indirection: a ref so the worker always calls the latest
+    // closures (mode dispatch + Stage C reading current state) without having to
+    // re-create the worker on every render.
+    const onStreamTickRef = useRef<() => void>(() => {});
+    const STREAM_TICK_MS = 8; // ~125 Hz tick; replay rows are still paced by their own timestamps
     const [replayFilename, setReplayFilename] = useState<string | null>(null);
     const [replaySpeed, setReplaySpeed] = useState<number>(1);
     const [replayPaused, setReplayPaused] = useState<boolean>(false);
@@ -1390,7 +1466,11 @@ const DualStream = () => {
         });
     };
 
-    const replayLoop = () => {
+    // Drains all recorded rows due by the current replay wall-clock and streams
+    // them to TouchDesigner. Driven by streamClockWorker ticks (not rAF), so it
+    // keeps running while the browser is backgrounded/occluded — e.g. when the
+    // user switches focus to TouchDesigner. See workers/streamClockWorker.ts.
+    const drainReplay = () => {
         if (streamModeRef.current !== 'replay') return;
         if (!replayPausedRef.current) {
             const elapsed = (performance.now() - replayStartedAtRef.current) * replaySpeedRef.current;
@@ -1413,8 +1493,43 @@ const DualStream = () => {
                 return;
             }
         }
-        requestAnimationFrame(replayLoop);
+        // Recompute predominance verdicts on the background-safe clock (not rAF) so the
+        // is_alpha flag stays fresh and keeps reaching TouchDesigner
+        // while the browser is backgrounded. Live mode does the same via onStreamTickRef;
+        // the rAF loop no longer runs Stage C in any mode.
+        runStageC(1);
+        runStageC(2);
     };
+
+    const startStreamClock = () => {
+        if (typeof window === "undefined") return;
+        if (!streamClockRef.current) {
+            streamClockRef.current = new Worker(new URL('../../../workers/streamClockWorker.ts', import.meta.url), {
+                type: 'module',
+            });
+            // Bind once. The handler dispatches through onStreamTickRef so it always
+            // runs the latest closures without re-creating the worker.
+            streamClockRef.current.onmessage = (e: MessageEvent) => {
+                if (e.data?.tick) onStreamTickRef.current();
+            };
+        }
+        streamClockRef.current.postMessage({ action: 'start', intervalMs: STREAM_TICK_MS });
+    };
+
+    const stopStreamClock = () => {
+        streamClockRef.current?.postMessage({ action: 'stop' });
+    };
+
+    // The background-safe clock runs whenever we're streaming — live OR replay —
+    // and idles when off. It is the sole driver of Stage C (predominance verdicts)
+    // in both modes, plus the replay row-drain, so those flags keep flowing to
+    // TouchDesigner even while the tab is hidden. The actual per-tick work is
+    // dispatched by onStreamTickRef (bound below, after runStageC is defined).
+    useEffect(() => {
+        if (streamMode === 'off') stopStreamClock();
+        else startStreamClock();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [streamMode]);
 
     const startReplay = async (filename: string) => {
         if (isRecordingRef.current) {
@@ -1448,7 +1563,8 @@ const DualStream = () => {
 
             setStreamMode('replay');
             streamModeRef.current = 'replay';
-            requestAnimationFrame(replayLoop);
+            // The streamMode effect (re)starts the stream clock; the tick dispatcher
+            // now drains rows since the mode is 'replay'.
             toast.success(`Replaying ${filename}`);
         } catch (e: any) {
             toast.error(`Failed to load recording: ${e?.message ?? e}`);
@@ -1471,6 +1587,14 @@ const DualStream = () => {
         const next: StreamMode = (isD1Connected || isD2Connected) ? 'live' : 'off';
         setStreamMode(next);
         streamModeRef.current = next;
+        // If we're going idle, the stream clock stops — so Stage C won't tick again
+        // to clear the on-screen highlights. Flush them once now against the rings
+        // we just zeroed. (When dropping to 'live', the clock keeps ticking and does
+        // this on its own.)
+        if (next === 'off') {
+            runStageC(1);
+            runStageC(2);
+        }
     };
 
     const pauseReplay = () => {
@@ -1643,6 +1767,36 @@ const DualStream = () => {
 
     // Stage C — scan a label ring for the longest contiguous non-none run.
     // Returns the run's band code (1/2/3), start index, and end index, or { code: 0 } if none.
+    // Normalized autocorrelation of the alpha-band signal. Rhythmicity = height of the
+    // autocorrelation peak in the alpha-period lag window: a sustained ~10 Hz oscillation
+    // scores high, broadband noise ~0. r2x is the value at twice the best lag (a periodic
+    // signal repeats there too). `sig` is a circular buffer; `pos` is the next-write index.
+    const alphaRhythmicity = (sig: Float32Array, pos: number, lagLo: number, lagHi: number): { peak: number; r2x: number } => {
+        const W = sig.length;
+        const t = new Float32Array(W);
+        let mean = 0;
+        for (let k = 0; k < W; k++) { const v = sig[(pos + k) % W]; t[k] = v; mean += v; }
+        mean /= W;
+        let den = 0;
+        for (let k = 0; k < W; k++) { const v = t[k] - mean; t[k] = v; den += v * v; }
+        if (den < 1e-9) return { peak: 0, r2x: 0 };
+        let peak = 0, bestLag = lagLo;
+        for (let tau = lagLo; tau <= lagHi; tau++) {
+            let num = 0;
+            for (let k = 0; k + tau < W; k++) num += t[k] * t[k + tau];
+            const r = num / den;
+            if (r > peak) { peak = r; bestLag = tau; }
+        }
+        let r2x = 0;
+        const tau2 = bestLag * 2;
+        if (tau2 < W) {
+            let num = 0;
+            for (let k = 0; k + tau2 < W; k++) num += t[k] * t[k + tau2];
+            r2x = num / den;
+        }
+        return { peak, r2x };
+    };
+
     const scanLongestRun = (ring: Uint8Array): { code: number; start: number; end: number; length: number } => {
         const N = ring.length;
         let bestCode = 0, bestStart = -1, bestEnd = -1, bestLen = 0;
@@ -1673,13 +1827,19 @@ const DualStream = () => {
         return { code: bestCode, start: bestStart, end: bestEnd, length: bestLen };
     };
 
-    const BAND_CODE_TO_NAME: Record<number, BandType | null> = { 1: 'alpha', 2: 'theta', 3: 'delta', 0: null };
+    const BAND_CODE_TO_NAME: Record<number, BandType | null> = { 1: 'alpha', 0: null }; // alpha-only
 
     const runStageC = (slot: 1 | 2) => {
         const detectionBandsRef = slot === 1 ? d1DetectionBandsRef : d2DetectionBandsRef;
         const detectionParamsRef = slot === 1 ? d1DetectionParamsRef : d2DetectionParamsRef;
         const labelRingsRef = slot === 1 ? d1LabelRingsRef : d2LabelRingsRef;
         const bandStateRef = slot === 1 ? d1BandStateRef : d2BandStateRef;
+        const bandEnvelopesMap = slot === 1 ? d1BandEnvelopesRef : d2BandEnvelopesRef;
+        const alphaSigRef = slot === 1 ? d1AlphaSigRef : d2AlphaSigRef;
+        const alphaSigPosRef = slot === 1 ? d1AlphaSigPosRef : d2AlphaSigPosRef;
+        const alphaBaseRef = slot === 1 ? d1AlphaBaseRef : d2AlphaBaseRef;
+        const combinedAlphaRef = slot === 1 ? d1CombinedAlphaRef : d2CombinedAlphaRef;
+        const metricValsRef = slot === 1 ? d1MetricValsRef : d2MetricValsRef;
 
         for (let ch = 0; ch < numChannels; ch++) {
             const detection = detectionBandsRef.current[ch];
@@ -1690,6 +1850,45 @@ const DualStream = () => {
                 if (highlightEl) highlightEl.style.display = 'none';
                 continue;
             }
+
+            // ── Alpha metrics (per tick): evaluate each enabled metric, combine (AND/OR),
+            //    and store the verdict that ingestSample stamps into the label ring. ──
+            {
+                const cfg = alphaMetricsRef.current;
+                const alphaEnv = bandEnvelopesMap.current.get('alpha')![ch];
+                const pAlpha = alphaEnv.getPower();
+                const prev = metricValsRef.current[ch];
+                let rhythm = prev?.rhythm ?? 0;
+                let r2x = prev?.r2x ?? 0;
+                if (cfg.rhythmicity && (streamTickRef.current % RHYTHM_EVERY) === 0) {
+                    const sig = alphaSigRef.current[ch];
+                    if (sig && sig.length > 0) {
+                        const sr = samplingrateref.current || 500;
+                        const lagLo = Math.max(2, Math.round(sr * 0.077));
+                        const lagHi = Math.round(sr * 0.125);
+                        const res = alphaRhythmicity(sig, alphaSigPosRef.current[ch] % sig.length, lagLo, lagHi);
+                        rhythm = res.peak; r2x = res.r2x;
+                    }
+                }
+                const base = alphaBaseRef.current[ch] ?? 0;
+                const relRise = base > 1e-9 ? pAlpha / base : 0;
+                const pTheta = bandEnvelopesMap.current.get('theta')![ch].getPower();
+                const pDelta = bandEnvelopesMap.current.get('delta')![ch].getPower();
+                const tot = pAlpha + pTheta + pDelta;
+                const rA = tot > 1e-9 ? pAlpha / tot : 0;
+                const rT = tot > 1e-9 ? pTheta / tot : 0;
+                const rD = tot > 1e-9 ? pDelta / tot : 0;
+                const dpar = detectionParamsRef.current[ch] ?? DEFAULT_DETECTION_PARAMS;
+                const votes: boolean[] = [];
+                if (cfg.rhythmicity) votes.push(rhythm >= cfg.rhythmicityMin && r2x >= 0);
+                if (cfg.relRise) votes.push(relRise >= cfg.relRiseMin);
+                if (cfg.power) votes.push(pAlpha >= cfg.powerMin);
+                if (cfg.legacy) votes.push(rA >= dpar.dominance && rA - Math.max(rT, rD) >= dpar.margin);
+                const combined = votes.length === 0 ? false : (cfg.combine === 'AND' ? votes.every(Boolean) : votes.some(Boolean));
+                combinedAlphaRef.current[ch] = combined;
+                metricValsRef.current[ch] = { rhythm, r2x, relRise, power: pAlpha, legacy: rA, combined };
+            }
+
             const ring = labelRingsRef.current[ch];
             if (!ring || ring.length === 0) {
                 if (highlightEl) highlightEl.style.display = 'none';
@@ -1702,10 +1901,8 @@ const DualStream = () => {
             const state: BandDetectionState = { ...emptyBandState };
             if (result.length >= minRunSamples) {
                 const band = BAND_CODE_TO_NAME[result.code];
-                if (band) {
-                    if (band === 'alpha') state.is_alpha = true;
-                    else if (band === 'theta') state.is_theta = true;
-                    else if (band === 'delta') state.is_delta = true;
+                if (band === 'alpha') {
+                    state.is_alpha = true;
                     state.runStart = result.start;
                     state.runEnd = result.end;
                     state.runBand = band;
@@ -1739,13 +1936,31 @@ const DualStream = () => {
         }
     };
 
-    // Animation loop — renders BOTH devices
+    // Per-tick work for the background-safe stream clock. Bound through a ref so the
+    // worker (created once) always invokes the latest closures. Replay drains due
+    // rows (drainReplay also runs Stage C); live just refreshes Stage C — the
+    // raw/filtered channels and band magnitudes already flow per BLE notification.
+    // Running here (not rAF) keeps the predominance flags alive while backgrounded.
+    useEffect(() => {
+        onStreamTickRef.current = () => {
+            streamTickRef.current++;
+            const mode = streamModeRef.current;
+            if (mode === 'replay') {
+                drainReplay();
+            } else if (mode === 'live') {
+                runStageC(1);
+                runStageC(2);
+            }
+        };
+    });
+
+    // Animation loop — renders BOTH devices. Stage C no longer runs here: it's
+    // driven by the background-safe stream clock (onStreamTickRef) in every mode,
+    // so the predominance flags stay fresh even when rAF is paused (tab hidden).
     const animate = useCallback(() => {
         if (pauseRef.current) {
             d1WglPlots.forEach((wglp) => wglp.update());
             d2WglPlots.forEach((wglp) => wglp.update());
-            runStageC(1);
-            runStageC(2);
             requestAnimationFrame(animate);
         }
     }, [d1WglPlots, d2WglPlots]);
@@ -1769,6 +1984,8 @@ const DualStream = () => {
         return () => {
             if (d1IntervalRef.current) clearInterval(d1IntervalRef.current);
             if (d2IntervalRef.current) clearInterval(d2IntervalRef.current);
+            streamClockRef.current?.terminate();
+            streamClockRef.current = null;
         };
     }, []);
 
@@ -2238,7 +2455,7 @@ const DualStream = () => {
                                     <div className="flex items-center pb-2">
                                         <div className="text-sm font-semibold w-20">Detect all</div>
                                         <div className="flex space-x-1">
-                                            {(['alpha', 'theta', 'delta'] as BandType[]).map(band => (
+                                            {(['alpha'] as BandType[]).map(band => (
                                                 <Button key={band} variant="outline" size="sm"
                                                     onClick={() => toggleDetectionBandAllChannels(band)}
                                                     style={allHaveDetectionBand(band) ? { backgroundColor: BAND_COLORS[band], color: '#000', outline: '2px solid #fff' } : {}}
@@ -2246,6 +2463,57 @@ const DualStream = () => {
                                                     {band.charAt(0).toUpperCase() + band.slice(1)}
                                                 </Button>
                                             ))}
+                                        </div>
+                                    </div>
+                                    {/* Alpha metric test harness (global) */}
+                                    <div className="flex flex-col pb-2 mb-1 border-b border-gray-200 dark:border-gray-700">
+                                        <div className="flex items-center justify-between">
+                                            <div className="text-sm font-semibold">Alpha metrics</div>
+                                            <Button variant="outline" size="sm" className="rounded-xl text-xs h-6 px-2"
+                                                onClick={() => setAlphaMetric('combine', alphaMetrics.combine === 'AND' ? 'OR' : 'AND')}>
+                                                {alphaMetrics.combine}
+                                            </Button>
+                                        </div>
+                                        <div className="flex flex-wrap gap-1 mt-1">
+                                            {(([['rhythmicity', 'Rhythm'], ['relRise', 'Rel.rise'], ['power', 'Power'], ['legacy', 'Legacy']]) as ['rhythmicity' | 'relRise' | 'power' | 'legacy', string][]).map(([key, label]) => (
+                                                <Button key={key} variant="outline" size="sm"
+                                                    onClick={() => setAlphaMetric(key, !alphaMetrics[key])}
+                                                    style={alphaMetrics[key] ? { backgroundColor: '#0ea5e9', color: '#000' } : {}}
+                                                    className="rounded-xl text-xs h-6 px-2">{label}</Button>
+                                            ))}
+                                        </div>
+                                        <div className="pl-1 pt-1 space-y-1">
+                                            {alphaMetrics.rhythmicity && (
+                                                <div className="flex items-center">
+                                                    <span className="text-xs text-gray-500 w-24">Rhythm ≥</span>
+                                                    <input type="range" min="0" max="1" step="0.01" value={alphaMetrics.rhythmicityMin}
+                                                        onChange={(e) => setAlphaMetric('rhythmicityMin', Number(e.target.value))} className="flex-1 h-[0.15rem]" />
+                                                    <span className="text-xs ml-1 w-10 text-right">{alphaMetrics.rhythmicityMin.toFixed(2)}</span>
+                                                </div>
+                                            )}
+                                            {alphaMetrics.relRise && (
+                                                <div className="flex items-center">
+                                                    <span className="text-xs text-gray-500 w-24">Rise ≥</span>
+                                                    <input type="range" min="1" max="5" step="0.1" value={alphaMetrics.relRiseMin}
+                                                        onChange={(e) => setAlphaMetric('relRiseMin', Number(e.target.value))} className="flex-1 h-[0.15rem]" />
+                                                    <span className="text-xs ml-1 w-10 text-right">{alphaMetrics.relRiseMin.toFixed(1)}x</span>
+                                                </div>
+                                            )}
+                                            {alphaMetrics.power && (
+                                                <div className="flex items-center">
+                                                    <span className="text-xs text-gray-500 w-24">Power ≥</span>
+                                                    <input type="range" min="0" max="4" step="0.1" value={Math.log10(Math.max(1, alphaMetrics.powerMin))}
+                                                        onChange={(e) => setAlphaMetric('powerMin', Math.pow(10, Number(e.target.value)))} className="flex-1 h-[0.15rem]" />
+                                                    <span className="text-xs ml-1 w-12 text-right">{Math.round(alphaMetrics.powerMin)}</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="pt-1 font-mono text-[10px] leading-tight">
+                                            {(['d1', 'd2'] as const).flatMap((dev) => (metricReadout[dev] ?? []).map((v, ch) => (
+                                                <div key={`${dev}-${ch}`} className={v.combined ? 'text-sky-500' : 'text-gray-400'}>
+                                                    {dev} ch{ch + 1}: R={v.rhythm.toFixed(2)} rise={v.relRise.toFixed(1)} P={Math.round(v.power)}{v.combined ? ' ● ALPHA' : ''}
+                                                </div>
+                                            )))}
                                         </div>
                                     </div>
                                     {/* Per-channel rows */}
@@ -2273,7 +2541,7 @@ const DualStream = () => {
                                                 <div className="flex items-center pl-2">
                                                     <span className="text-xs text-gray-500 w-16">Detect:</span>
                                                     <div className="flex space-x-1">
-                                                        {(['alpha', 'theta', 'delta'] as BandType[]).map(band => (
+                                                        {(['alpha'] as BandType[]).map(band => (
                                                             <Button key={band} variant="outline" size="sm"
                                                                 onClick={() => toggleDetectionBand(index, band)}
                                                                 style={d1DetectionBandsRef.current[index]?.has(band) ? { backgroundColor: BAND_COLORS[band], color: '#000', outline: '2px solid #fff' } : {}}

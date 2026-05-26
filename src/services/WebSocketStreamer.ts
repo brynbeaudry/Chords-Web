@@ -15,8 +15,8 @@ export class WebSocketStreamer {
   private device2Raw: number[] = [0, 0, 0];
   private device1Bands: { [band: string]: number[] } = {};
   private device2Bands: { [band: string]: number[] } = {};
-  private device1BandStates: { [channel: number]: { is_alpha: boolean; is_theta: boolean; is_delta: boolean } } = {};
-  private device2BandStates: { [channel: number]: { is_alpha: boolean; is_theta: boolean; is_delta: boolean } } = {};
+  private device1BandStates: { [channel: number]: { is_alpha: boolean } } = {};
+  private device2BandStates: { [channel: number]: { is_alpha: boolean } } = {};
 
   connect(name: string, url: string): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -86,11 +86,11 @@ export class WebSocketStreamer {
     this.device2Bands[band] = channels;
   }
 
-  setDevice1BandState(channel: number, state: { is_alpha: boolean; is_theta: boolean; is_delta: boolean }): void {
+  setDevice1BandState(channel: number, state: { is_alpha: boolean }): void {
     this.device1BandStates[channel] = state;
   }
 
-  setDevice2BandState(channel: number, state: { is_alpha: boolean; is_theta: boolean; is_delta: boolean }): void {
+  setDevice2BandState(channel: number, state: { is_alpha: boolean }): void {
     this.device2BandStates[channel] = state;
   }
 
@@ -128,18 +128,12 @@ export class WebSocketStreamer {
       });
     }
 
-    // Predominance-detection booleans — strictly additive, appended last
+    // Alpha predominance boolean — alpha-only (theta/delta detection removed)
     for (const [chStr, st] of Object.entries(this.device1BandStates)) {
-      const ch = Number(chStr);
-      message[`d1_ch${ch}_is_alpha`] = st.is_alpha ? 1 : 0;
-      message[`d1_ch${ch}_is_theta`] = st.is_theta ? 1 : 0;
-      message[`d1_ch${ch}_is_delta`] = st.is_delta ? 1 : 0;
+      message[`d1_ch${Number(chStr)}_is_alpha`] = st.is_alpha ? 1 : 0;
     }
     for (const [chStr, st] of Object.entries(this.device2BandStates)) {
-      const ch = Number(chStr);
-      message[`d2_ch${ch}_is_alpha`] = st.is_alpha ? 1 : 0;
-      message[`d2_ch${ch}_is_theta`] = st.is_theta ? 1 : 0;
-      message[`d2_ch${ch}_is_delta`] = st.is_delta ? 1 : 0;
+      message[`d2_ch${Number(chStr)}_is_alpha`] = st.is_alpha ? 1 : 0;
     }
 
     conn.socket.send(JSON.stringify(message));
