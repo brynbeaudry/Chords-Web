@@ -169,6 +169,68 @@ export class WebSocketStreamer {
     });
   }
 
+  // ─── Dual Alpha (contract v2) additions; nothing above is changed ───
+
+  private autoTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private autoStopped: Set<string> = new Set();
+
+  /**
+   * Opens `url` under `name` and keeps it open: on failure or loss it retries quietly,
+   * backing off 0.5 s, 1 s, 2 s, 4 s, then every 5 s. `onStatus` reports each change.
+   * Returns a function that stops retrying and closes the socket.
+   */
+  connectAuto(url: string, onStatus?: (connected: boolean) => void, name = 'touchdesigner'): () => void {
+    this.autoStopped.delete(name);
+    let delay = 500;
+    const attempt = () => {
+      if (this.autoStopped.has(name)) return;
+      let socket: WebSocket;
+      try {
+        socket = new WebSocket(url);
+      } catch {
+        schedule();
+        return;
+      }
+      socket.onopen = () => {
+        if (this.autoStopped.has(name)) { socket.close(); return; }
+        delay = 500;
+        this.sockets.set(name, { socket, url, isConnected: true });
+        onStatus?.(true);
+      };
+      socket.onclose = () => {
+        const conn = this.sockets.get(name);
+        const wasConnected = conn?.socket === socket && conn.isConnected;
+        if (conn?.socket === socket) this.sockets.delete(name);
+        if (wasConnected) onStatus?.(false);
+        schedule();
+      };
+      socket.onerror = () => { /* onclose follows and schedules the retry */ };
+    };
+    const schedule = () => {
+      if (this.autoStopped.has(name)) return;
+      const t = setTimeout(attempt, delay);
+      this.autoTimers.set(name, t);
+      delay = Math.min(5000, delay * 2);
+    };
+    attempt();
+    return () => {
+      this.autoStopped.add(name);
+      const t = this.autoTimers.get(name);
+      if (t) clearTimeout(t);
+      this.autoTimers.delete(name);
+      this.disconnect(name);
+    };
+  }
+
+  /** Sends one contract v2 state message as JSON. Returns false if not sent. */
+  sendState(msg: object, name = 'touchdesigner'): boolean {
+    const conn = this.sockets.get(name);
+    if (!conn?.isConnected || conn.socket.readyState !== WebSocket.OPEN) return false;
+    if (conn.socket.bufferedAmount > 16 * BACKPRESSURE_LIMIT) return false;
+    conn.socket.send(JSON.stringify(msg));
+    return true;
+  }
+
   isConnected(name: string): boolean {
     return this.sockets.get(name)?.isConnected ?? false;
   }

@@ -7,7 +7,8 @@
     "prebuild": "ts-node scripts/generateManifest.mjs",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint src workers",
+    "test": "node --import ./scripts/ts-hooks.mjs --test \"src/**/*.test.ts\"",
     "export": "next export",
     "distDir": "out",
     "generate-manifest": "ts-node scripts/generateManifest.mjs"

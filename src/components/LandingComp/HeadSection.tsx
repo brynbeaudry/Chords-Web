@@ -76,6 +76,18 @@ const HeadSection: React.FC = () => {
                     <span>Visualize Now</span>
                   </Button>
                 </Link>
+                <Link href="/dual-stream" className="flex flex-col items-center">
+                  <Button variant="outline" className="py-2 px-4 sm:py-2 sm:px-6 rounded-xl font-semibold">
+                    <span>Dual Stream</span>
+                  </Button>
+                  <span className="mt-1 text-[11px] text-gray-500">pairs with TouchDesigner V15</span>
+                </Link>
+                <Link href="/dual-alpha" className="flex flex-col items-center">
+                  <Button variant="outline" className="py-2 px-4 sm:py-2 sm:px-6 rounded-xl font-semibold">
+                    <span>Dual Alpha</span>
+                  </Button>
+                  <span className="mt-1 text-[11px] text-gray-500">pairs with TouchDesigner V16</span>
+                </Link>
                 <Link href="https://github.com/upsidedownlabs/Chords-Arduino-Firmware" target="_blank">
                   <Button
                     variant="outline"
