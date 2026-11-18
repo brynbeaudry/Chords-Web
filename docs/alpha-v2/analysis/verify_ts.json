@@ -1,0 +1,40 @@
+{
+ "s3_Oz": {
+  "hops": 1375,
+  "hops_py": 1375,
+  "max_prom_diff_db": 1.798835085997652e-06,
+  "iaf_agree": 1.0,
+  "art_agree": 1.0,
+  "state_agree": 1.0,
+  "ms_per_s": 2.923558164114327
+ },
+ "s11_O1": {
+  "hops": 1350,
+  "hops_py": 1350,
+  "max_prom_diff_db": 4.883634563412897e-07,
+  "iaf_agree": 1.0,
+  "art_agree": 1.0,
+  "state_agree": 1.0,
+  "ms_per_s": 2.7873872847591135
+ },
+ "s6_Fp1": {
+  "hops": 1467,
+  "hops_py": 1467,
+  "max_prom_diff_db": 1.242561651487728e-06,
+  "iaf_agree": 1.0,
+  "art_agree": 1.0,
+  "state_agree": 1.0,
+  "ms_per_s": 2.7611119364430015
+ },
+ "s3_Oz_rail": {
+  "hops": 1375,
+  "hops_py": 1375,
+  "max_prom_diff_db": 5.404111812101764e-05,
+  "iaf_agree": 1.0,
+  "art_agree": 1.0,
+  "state_agree": 1.0,
+  "ms_per_s": 2.7280713305898496,
+  "rail_on_before": true,
+  "rail_forced_off_after_s": 3.116015625000003
+ }
+}

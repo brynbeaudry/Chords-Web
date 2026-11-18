@@ -36,3 +36,9 @@ yarn-error.log*
 next-env.d.ts
 CanvasOld.tsx
 node_modules
+
+# private correspondence and annotated reviews (kept local)
+/docs/alpha-v2/review/
+# analysis data downloads
+/docs/alpha-v2/analysis/cache/
+/docs/alpha-v2/analysis/data/
