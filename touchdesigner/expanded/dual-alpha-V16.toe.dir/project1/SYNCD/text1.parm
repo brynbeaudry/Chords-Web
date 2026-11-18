@@ -1,0 +1,9 @@
+?
+pageindex 0 1
+text 17 3.0 "str(round(op('/controls/Hold_time').par.value0.eval(), 1))"
+typeface 0 Bold
+fontsizex 0 8.1
+alignx 0 right
+aligny 0 top
+resmult 0 off
+?

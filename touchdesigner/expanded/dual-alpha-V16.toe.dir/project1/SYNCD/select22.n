@@ -1,0 +1,9 @@
+CHOP:select
+tile 7025 -425 130 90
+flags =  activate on parlanguage 0
+inputs
+{
+0 	Noise10exponent1/out1
+}
+color 0.67 0.67 0.67 
+end

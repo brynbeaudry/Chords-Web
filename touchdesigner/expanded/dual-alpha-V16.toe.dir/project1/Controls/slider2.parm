@@ -1,0 +1,16 @@
+?
+pageindex 0 2
+value0 0 0.585859
+value1 0 0.5
+w 0 100
+h 0 20
+display 0 off
+resizecomp 17 "" parent(2).op('container1_VHS_Tutorialby_Warlock_/slider1')
+top 0 ./back
+crop 0 on
+enablecloning 0 off
+clone 49 "" parent(2).op('container1_VHS_Tutorialby_Warlock_/slider1')
+enableexternaltox 0 off
+externaltox 48 "" "parent.sys.fileFolder + '/TDPackages/slider/slider.tox'"
+relpath 0 externaltox
+?

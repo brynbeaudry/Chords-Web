@@ -1,0 +1,14 @@
+TOP:comp
+tile 5500 -2025 130 72
+flags =  parlanguage 0
+inputs
+{
+0 	text1
+1 	null15
+2 	null14
+3 	blur2
+4 	render6
+5 	null2
+}
+color 0.67 0.67 0.67 
+end

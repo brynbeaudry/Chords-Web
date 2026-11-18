@@ -1,0 +1,9 @@
+CHOP:rename
+tile 550 -25 130 90
+flags =  parlanguage 0
+inputs
+{
+0 	ts_clock
+}
+color 0.67 0.67 0.67 
+end

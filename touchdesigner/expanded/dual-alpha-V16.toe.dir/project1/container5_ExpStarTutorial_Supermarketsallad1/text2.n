@@ -1,0 +1,6 @@
+TOP:text
+tile 4050 -1392 660 181
+flags =  viewer 1 parlanguage 0
+color 0.67 0.67 0.67 
+view -1 3 -0.0649891 0.146055 0.752623 4 0 1 0 0 0
+end

@@ -1,0 +1,9 @@
+CHOP:logic
+tile 425 -775 130 90
+flags =  parlanguage 0
+inputs
+{
+0 	logic1
+}
+color 0.67 0.67 0.67 
+end

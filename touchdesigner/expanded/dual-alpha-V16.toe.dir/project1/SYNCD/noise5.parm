@@ -1,0 +1,7 @@
+?
+type 0 simplex3d
+period 16 1 op('Noise4_HarmoinicGainL1')['chan1']
+spread 0 7.3
+gain 16 0 op('Noise4_HarmoinicGainL1')['chan1']
+amp0 48 0 op('FNoise4_AmpL1')['chan1']
+?

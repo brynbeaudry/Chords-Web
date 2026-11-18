@@ -1,0 +1,6 @@
+?
+displaceweightx 0 0.53
+displaceweighty 0 1
+offsetweight 16 0 "1 - me.par.uvweight.eval()"
+extend 0 repeat
+?

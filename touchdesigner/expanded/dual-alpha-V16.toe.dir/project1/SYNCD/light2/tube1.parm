@@ -1,0 +1,10 @@
+?
+type 0 prim
+orient 0 z
+tx 0 0
+ty 0 0
+tz 17 0 -me.par.height*0.5
+rad1 0 0.01
+rad2 17 1 mod.math.sin(mod.math.radians(parent().par.coneangle/2))
+height 17 1 mod.math.cos(mod.math.radians(parent().par.coneangle/2))
+?

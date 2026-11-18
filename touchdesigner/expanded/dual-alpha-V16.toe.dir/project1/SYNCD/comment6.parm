@@ -1,0 +1,36 @@
+?
+pageindex 0 3
+opviewer 256 ./annotation
+encloseops 273 on "me.EncloseOPs if hasattr(me, 'EncloseOPs') else True"
+utility 0 on
+includeinorder 0 on
+layerzone 17 belowgrid "0 if hasattr(me, 'EncloseOPs') and me.EncloseOPs else 1"
+ext0object 256 op.TDAnnotate.mod.AnnotateExt.AnnotateExt(me)
+ext0name 256 ""
+ext0promote 256 on
+parentshortcut 256 Annotate
+clone 17 "" "op.TDAnnotate.op('annotate', includeUtility=True)"
+Bodyfontsize 67108928 8
+Titlealign 67109056 left
+Bodytext 67108928 "TWO FACES"
+Titletext 67109056 ""
+Version 67109184 1.0
+Bodymaxwidth 67109056 1000
+Backcolorr 67108945 0.45 "me.color[0] # node color [r]"
+Backcolorg 67108945 0.45 me.color[1]
+Backcolorb 67108945 0.45 "me.color[2] "
+Titleheight 67109056 30
+Opviewer 67109056 ""
+Opviewerinteractive 67109056 off
+Opvieweroversize 67109056 natural
+Opviewersizew 67109056 800
+Opviewersizeh 67109056 800
+Opviewerscale 67109056 1
+Opviewerjustifyx 67109056 0
+Opviewerjustifyy 67109056 0
+Opviewerfillbodytitle 67109056 off
+Opviewerzoom 67109056 1
+Opvieweroffsetx 67109056 0
+Opvieweroffsety 67109056 0
+Opviewerfillalpha 67109056 1
+?

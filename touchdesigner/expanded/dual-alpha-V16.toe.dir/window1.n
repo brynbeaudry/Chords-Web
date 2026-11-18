@@ -1,0 +1,6 @@
+COMP:window
+v 761 457 1
+tile 325 -175 160 130
+flags =  parlanguage 0
+color 0.67 0.67 0.67 
+end

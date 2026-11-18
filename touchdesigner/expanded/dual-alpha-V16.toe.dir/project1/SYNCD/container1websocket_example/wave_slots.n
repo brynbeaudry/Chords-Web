@@ -1,0 +1,11 @@
+CHOP:merge
+tile 1600 -700 130 90
+flags =  parlanguage 0
+inputs
+{
+0 	wave_slot1
+1 	wave_slot2
+2 	wave_slot3
+}
+color 0.3 0.5 0.75 
+end

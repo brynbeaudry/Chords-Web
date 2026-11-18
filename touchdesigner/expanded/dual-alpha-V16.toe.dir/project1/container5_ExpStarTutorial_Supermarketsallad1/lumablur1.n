@@ -1,0 +1,10 @@
+TOP:lumablur
+tile 4775 -75 130 90
+flags =  parlanguage 0
+inputs
+{
+0 	multiply1
+1 	depth1
+}
+color 0.55 0.55 0.55 
+end

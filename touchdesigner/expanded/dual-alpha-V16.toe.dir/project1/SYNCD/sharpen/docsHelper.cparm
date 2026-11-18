@@ -1,0 +1,16 @@
+?
+pages 2 "Docs Helper" About
+772804868 Helpcommand "Help Command" 1 1 0 0 1 1 1 2 0 "" "" "Docs Helper" 1
+772935940 Palettename "Palette COMP Name" 1 1 0 0 1 1 1 2 0 "" "" "Docs Helper" 3 "me.par.Mode == 'Palette'"
+772804877 Palettecomp "Help COMP" 1 1 0 0 1 1 1 2 0 "" "" "Docs Helper" 0
+-1374678779 Createaboutpage "Create About Page and Pars" 1 1 0 0 1 1 1 2 0 "" "" "Docs Helper" 9
+772935941 Resetpalettecompname "Reset Palette COMP Name" 1 1 0 0 1 1 1 2 0 "" "" "Docs Helper" 4 "me.par.Mode == 'Palette'"
+772804869 Testopenhelp "Test Open Help" 1 1 0 0 1 1 1 2 0 "" "" "Docs Helper" 11
+772935939 Experimental Experimental 1 1 0 0 1 1 1 2 0 "" "" "Docs Helper" 6 "me.par.Mode != 'URL'"
+-1374678769 Mode Mode 1 1 0 0 1 1 1 2 0 Palette "" "Docs Helper" 4097 3 URL URL Wiki Wiki Palette Palette 2
+772935940 Section Section 1 1 0 0 1 1 1 2 0 "" "" "Docs Helper" 7 "me.par.Mode != 'URL'"
+772935940 Wikipage "Wiki Page" 1 1 0 0 1 1 1 2 0 "" "" "Docs Helper" 5 "me.par.Mode == 'Wiki'"
+772935940 Url URL 1 1 0 0 1 1 1 2 0 https://www.derivative.ca "" "Docs Helper" 8 "me.par.Mode == 'URL'"
+772804868 Version Version 1 1 0 0 1 1 1 2 0 1.3.1 "" About 0
+772804869 Settoxsavebuild "Set Tox Save Build" 1 1 0 0 1 1 1 2 0 "" "" "Docs Helper" 10
+?

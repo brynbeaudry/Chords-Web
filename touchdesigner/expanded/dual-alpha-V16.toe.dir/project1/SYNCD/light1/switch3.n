@@ -1,0 +1,10 @@
+SOP:switch
+tile 1175 -651 90 60
+flags =  viewer 1 parlanguage 0
+inputs
+{
+0 	add1
+1 	copy1
+}
+color 0.55 0.55 0.55 
+end

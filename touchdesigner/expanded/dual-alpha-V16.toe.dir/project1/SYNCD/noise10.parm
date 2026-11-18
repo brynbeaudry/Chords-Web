@@ -1,0 +1,17 @@
+?
+type 0 perlin4d
+period 17 0.82 op('Noise10period')['chan4']
+harmon 0 0
+spread 0 7.5
+gain 0 0.14
+exp 17 1.02 op('Noise10exponent')['chan1']
+amp 0 2
+offset 0 0.447
+mono 0 off
+tx 0 0
+ty 0 0
+tz 17 0 absTime.seconds*.5
+resolutionw 17 256 me.parent().width
+resolutionh 17 256 me.parent().height
+format 0 rgba32float
+?

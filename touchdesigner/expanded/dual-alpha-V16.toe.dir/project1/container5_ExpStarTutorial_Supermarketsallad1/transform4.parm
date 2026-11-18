@@ -1,0 +1,5 @@
+?
+tx 17 0 absTime.seconds*.01
+ty 0 0
+extend 0 repeat
+?

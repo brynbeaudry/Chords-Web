@@ -1,0 +1,12 @@
+?
+threshup 0 0.5
+retrigger 0 30
+mintrigger 0 15
+remainder 0 crop
+attack 0 1
+peaklen 0 10
+decay 0 3
+sustain 0 0
+timeslice 0 on
+threshold 0 on
+?

@@ -1,0 +1,18 @@
+?
+const0name 0 d1_level
+const0value 17 0 "float(op('eeg')['d1_level']) * float(op('eeg')['d1_ok']) * (absTime.seconds - float(op('eeg_meta')['last_msg']) < 2)"
+const1name 0 d1_ok
+const1value 17 0 "float(op('eeg')['d1_ok']) * (absTime.seconds - float(op('eeg_meta')['last_msg']) < 2)"
+const2name 0 d2_level
+const2value 17 0 "float(op('eeg')['d2_level']) * float(op('eeg')['d2_ok']) * (absTime.seconds - float(op('eeg_meta')['last_msg']) < 2)"
+const3name 0 d2_ok
+const3value 17 0 "float(op('eeg')['d2_ok']) * (absTime.seconds - float(op('eeg_meta')['last_msg']) < 2)"
+const4name 0 pair_level
+const4value 17 0 "float(op('eeg')['pair_level']) * (absTime.seconds - float(op('eeg_meta')['last_msg']) < 2)"
+const5name 0 stale
+const5value 17 1 "0 if absTime.seconds - float(op('eeg_meta')['last_msg']) < 2 else 1"
+const6name 0 age
+const6value 17 0 "absTime.seconds - float(op('eeg_meta')['last_msg'])"
+const7name 0 contract_error
+const7value 17 0 float(op('contract_error')['contract_error'])
+?

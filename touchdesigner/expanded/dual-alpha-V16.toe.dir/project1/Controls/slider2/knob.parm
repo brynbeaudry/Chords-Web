@@ -1,0 +1,13 @@
+?
+x 273 0 "(parent().par.zonel + [tdu.remap(parent().par.value0.eval(), parent().par.valuerange0l.eval(), parent().par.valuerange0h.eval(), 0., 1.), 0., tdu.remap(parent().par.value0.eval(), parent().par.valuerange0l.eval(), parent().par.valuerange0h.eval(), 0., 1.)][parent().par.slidertype] * (parent().par.zoner-parent().par.zonel)) * parent().width - [0., me.width/2][me.width<5]"
+y 273 1049 "(parent().par.zoneb + [0., tdu.remap(parent().par.value1.eval(), parent().par.valuerange1l.eval(), parent().par.valuerange1h.eval(), 0., 1.), tdu.remap(parent().par.value1.eval(), parent().par.valuerange1l.eval(), parent().par.valuerange1h.eval(), 0., 1.)][parent().par.slidertype] * (parent().par.zonet-parent().par.zoneb)) * parent().height - [0., me.height/2][me.height<5]"
+w 273 4 "parent().width if parent().par.slidertype == 'sliderv' else  4"
+h 273 300 "parent().height if parent().par.slidertype == 'slideru' else 4"
+layer 0 2
+clickthrough 0 on
+bgcolorr 49 0.6 ".2 * parent().par.colorr + .5"
+bgcolorg 49 0.6 ".2 * parent().par.colorg + .5"
+bgcolorb 49 0.6 ".2 * parent().par.colorb + .5"
+bgalpha 0 1
+borderover 0 off
+?

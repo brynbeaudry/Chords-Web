@@ -1,0 +1,9 @@
+TOP:transform
+tile 4650 -1750 418 120
+flags =  viewer 1 parlanguage 0
+inputs
+{
+0 	text2
+}
+color 0.67 0.67 0.67 
+end

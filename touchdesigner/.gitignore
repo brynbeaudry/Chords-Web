@@ -1,0 +1,19 @@
+# Models, recordings and media from TD.zip live next to the .toe on the show machine,
+# never in the repo (see ASSETS.md).
+*.obj
+*.mtl
+*.blend
+*.blend1
+*.glb
+*.mov
+*.mp3
+*.chan
+EEG Channel Recordings/
+Backup/
+howto/
+Wave-container.tox
+# TouchDesigner autosaves and toeexpand scratch
+*.toe.bak
+/*.toe.dir/
+/*.toe.toc
+__pycache__/

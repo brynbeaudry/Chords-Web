@@ -1,0 +1,13 @@
+SOP:merge
+tile 805 -144 90 60
+flags =  viewer 1 parlanguage 0
+inputs
+{
+0 	grid1
+1 	tube1
+2 	skin1
+3 	merge3
+4 	switch2
+}
+color 0.55 0.55 0.55 
+end

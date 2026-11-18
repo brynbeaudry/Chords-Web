@@ -1,0 +1,12 @@
+?
+tx 0 0
+ty 0 1.1
+tz 0 6.3
+rx 0 -11
+ry 0 0
+rz 0 0
+orthowidth 0 10
+viewanglemethod 0 vertfov
+fov 0 29.4
+near 0 0.11
+?

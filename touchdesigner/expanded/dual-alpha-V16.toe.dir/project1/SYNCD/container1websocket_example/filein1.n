@@ -1,0 +1,6 @@
+CHOP:filein
+tile -100 650 610 496
+flags =  viewer 1 parlanguage 0
+color 0.67 0.67 0.67 
+view -1 5 -1 1 0.034375 -1.5 1.5 4 3 10648 10 0 1 *
+end

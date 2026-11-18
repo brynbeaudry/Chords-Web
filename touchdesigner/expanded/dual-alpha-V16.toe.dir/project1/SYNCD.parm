@@ -1,0 +1,6 @@
+?
+w 17 1280 op('Controls/1_Set_resolution').par.const0value
+h 17 720 op('Controls/1_Set_resolution').par.const1value
+postoffsetx 0 0.1
+postoffsety 0 0.1
+?

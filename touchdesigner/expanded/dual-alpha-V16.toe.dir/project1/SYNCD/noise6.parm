@@ -1,0 +1,11 @@
+?
+pageindex 0 1
+seed 0 0.88
+period 0 1.61
+harmon 0 6
+rough 0 0.031
+amp 0 0.19
+tx 0 0
+ty 0 0
+tz 17 0 absTime.seconds*0.1
+?

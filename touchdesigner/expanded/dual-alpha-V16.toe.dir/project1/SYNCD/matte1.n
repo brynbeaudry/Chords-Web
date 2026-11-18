@@ -1,0 +1,11 @@
+TOP:matte
+tile 4500 -2100 130 72
+flags =  parlanguage 0
+inputs
+{
+0 	lookup2
+1 	switch1
+2 	switch1
+}
+color 0.67 0.67 0.67 
+end

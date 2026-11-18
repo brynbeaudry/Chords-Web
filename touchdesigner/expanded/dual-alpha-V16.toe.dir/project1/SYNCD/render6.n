@@ -1,0 +1,5 @@
+TOP:render
+tile 2607 1563 482 270
+flags =  parlanguage 0
+color 0.67 0.67 0.67 
+end

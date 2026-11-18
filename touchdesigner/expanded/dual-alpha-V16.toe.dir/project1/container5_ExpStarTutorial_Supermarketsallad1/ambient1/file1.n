@@ -1,0 +1,5 @@
+SOP:filein
+tile 0 0 130 90
+flags =  current on viewer 1 display on parlanguage 0
+color 0.55 0.55 0.55 
+end

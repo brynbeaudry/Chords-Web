@@ -1,0 +1,6 @@
+COMP:container
+v 1068.57 533.877 0.472949
+tile 550 1525 282 220
+flags =  parlanguage 0
+color 0.67 0.67 0.67 
+end

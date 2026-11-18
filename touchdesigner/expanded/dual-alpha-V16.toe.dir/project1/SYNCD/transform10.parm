@@ -1,0 +1,8 @@
+?
+tx 32 -9
+ty 49 -2 op('SpositionL')['chan4']
+tz 32 -25
+rx 49 0 op('ScolorSpeedL')['chan4']*300
+ry 49 0 op('ScolorSpeedL')['chan5']*100
+rz 49 0 op('ScolorSpeedL')['chan6']*300
+?

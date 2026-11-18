@@ -1,0 +1,9 @@
+TOP:emboss
+tile 3725 -3907 253 141
+flags =  parlanguage 0
+inputs
+{
+0 	edge1
+}
+color 0.67 0.67 0.67 
+end

@@ -1,0 +1,9 @@
+CHOP:limit
+tile 2800 175 712 374
+flags =  parlanguage 0
+inputs
+{
+0 	null1
+}
+color 0.67 0.67 0.67 
+end

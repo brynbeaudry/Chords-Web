@@ -1,0 +1,5 @@
+?
+radx 17 1 parent().par.attenuationend
+rady 17 1 parent().par.attenuationend
+arc 0 openarc
+?

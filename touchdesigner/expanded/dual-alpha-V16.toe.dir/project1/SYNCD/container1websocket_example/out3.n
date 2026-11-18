@@ -1,0 +1,9 @@
+CHOP:out
+tile 3125 -1300 130 90
+flags =  parlanguage 0
+inputs
+{
+0 	select3
+}
+color 0.67 0.67 0.67 
+end

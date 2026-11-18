@@ -1,0 +1,22 @@
+?
+pageindex 0 2
+value0 0 0.893939
+value1 0 0.5
+valuerange0l 0 0.5
+w 0 100
+h 0 20
+display 0 off
+bgcolorr 0 0.913725
+bgcolorg 0 1
+bgcolorb 0 0
+top 0 ./back
+borderar 32 0
+borderag 32 1
+borderab 32 0.72549
+crop 0 on
+enablecloning 0 off
+clone 49 "" op.TDTox.op('defaultCOMPs/slider')
+enableexternaltox 0 off
+externaltox 48 "" "parent.sys.fileFolder + '/TDPackages/slider/slider.tox'"
+relpath 0 externaltox
+?

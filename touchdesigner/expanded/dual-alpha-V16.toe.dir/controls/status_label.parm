@@ -1,0 +1,23 @@
+?
+pageindex 0 4
+text 17 "NO DATA" "('FORCED SYNC  ' if op('Hold_time').par.value0.eval() <= 0.05 else '') + ('CONTRACT ERROR  ' if float(op('/project1/SYNCD/container1websocket_example/contract_error')['contract_error']) > 0.5 else '') + ('NO DATA' if float(op('/project1/SYNCD/container1websocket_example/STATE')['stale']) > 0.5 else '')"
+type 0 multiline
+legacyfontselection 0 on
+scaletofit 0 onlyshrink
+fontsize 0 10
+fontcolorr 0 1
+fontcolorg 0 0.15
+fontcolorb 0 0.15
+textpaddingl 32 4
+textpaddingr 32 4
+textpaddingb 32 3
+textpaddingt 32 3
+alignx 0 left
+w 0 100
+h 0 20
+clickthrough 0 on
+bgcolorr 0 0.08
+bgcolorg 0 0.08
+bgcolorb 0 0.08
+bgalpha 0 1
+?

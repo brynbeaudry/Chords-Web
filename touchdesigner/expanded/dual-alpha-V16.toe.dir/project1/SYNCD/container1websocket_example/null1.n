@@ -1,0 +1,9 @@
+CHOP:null
+tile 2025 600 130 90
+flags =  parlanguage 0
+inputs
+{
+0 	wave_slots
+}
+color 0.67 0.67 0.67 
+end

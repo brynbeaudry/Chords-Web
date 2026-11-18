@@ -1,0 +1,5 @@
+?
+pbx 0 0
+pby 17 0 "mod.math.sin(-mod.math.radians(parent().par.coneangle/2)) - 	mod.math.sin(mod.math.radians(parent().par.conedelta/2))"
+pbz 17 0 -op('tube1').par.height
+?

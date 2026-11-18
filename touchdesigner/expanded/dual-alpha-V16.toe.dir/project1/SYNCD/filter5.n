@@ -1,0 +1,9 @@
+CHOP:filter
+tile 5425 -900 130 90
+flags =  parlanguage 0
+inputs
+{
+0 	select6
+}
+color 0.67 0.67 0.67 
+end

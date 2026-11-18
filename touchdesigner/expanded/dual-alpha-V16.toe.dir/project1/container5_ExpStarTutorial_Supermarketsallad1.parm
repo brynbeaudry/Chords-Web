@@ -1,0 +1,8 @@
+?
+pageindex 0 1
+w 17 1280 op('Controls/1_Set_resolution').par.const0value
+h 17 720 op('Controls/1_Set_resolution').par.const1value
+display 0 off
+enableexternaltox 0 off
+externaltox 17 "" "me.parent().fileFolder + '/' + 'Wave-container.tox'"
+?

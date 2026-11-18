@@ -1,0 +1,6 @@
+?
+videocodec 0 mpeg4
+n 0 1
+file 16 "C:/Users/amind/Documents/Art Projects/VIRGIL RIVIERA/INTER-FACE 2.0/output/20260402_Interface2_K-K.mov" "'TDMovieOut' + me.fileSuffix"
+fps 16 60 me.time.rate
+?

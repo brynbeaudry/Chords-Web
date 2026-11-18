@@ -1,0 +1,5 @@
+COMP:text
+tile -425 600 160 76
+flags =  parlanguage 0
+color 0.3 0.5 0.75 
+end

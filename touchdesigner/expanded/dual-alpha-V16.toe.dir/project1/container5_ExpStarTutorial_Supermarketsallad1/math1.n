@@ -1,0 +1,9 @@
+CHOP:math
+tile 3325 125 130 90
+flags =  parlanguage 0
+inputs
+{
+0 	lfo1
+}
+color 0.67 0.67 0.67 
+end

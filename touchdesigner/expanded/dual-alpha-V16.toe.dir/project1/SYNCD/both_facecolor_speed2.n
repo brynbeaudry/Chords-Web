@@ -1,0 +1,10 @@
+CHOP:null
+tile 6150 600 130 76
+flags =  parlanguage 0
+inputs
+{
+0 	speed3
+}
+color 0.2 0.05 0.5 
+view -1 5 -1 1 7.69436 -1.5 1.5 4 3 10648 10 0 1 *
+end

@@ -1,0 +1,5 @@
+TOP:noise
+tile 4325 -4880 1210 679
+flags =  parlanguage 0
+color 0.67 0.67 0.67 
+end

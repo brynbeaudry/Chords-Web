@@ -1,0 +1,9 @@
+DAT:null
+tile 2850 -1675 242 164
+flags =  viewer 1 parlanguage 0
+inputs
+{
+0 	table1
+}
+color 0.67 0.67 0.67 
+end

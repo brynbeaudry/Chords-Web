@@ -1,0 +1,6 @@
+?
+type 0 hanning
+extend 0 repeat
+preshrink 0 5
+size 48 5 op('math2')['chan1']
+?

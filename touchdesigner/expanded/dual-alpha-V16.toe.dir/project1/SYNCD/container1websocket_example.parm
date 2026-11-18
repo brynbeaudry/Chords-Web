@@ -1,0 +1,4 @@
+?
+enableexternaltox 0 off
+externaltox 17 "" "me.parent().fileFolder + '/' + '../container1websocket_example.tox'"
+?

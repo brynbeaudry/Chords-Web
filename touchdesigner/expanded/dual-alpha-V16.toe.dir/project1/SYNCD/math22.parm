@@ -1,0 +1,6 @@
+?
+pageindex 0 1
+gain 17 1.84 "op('select20')['v1'] * op('heads')['d1_calm']"
+fromrange1 0 -1
+fromrange2 0 1
+?

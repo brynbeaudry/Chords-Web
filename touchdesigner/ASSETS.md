@@ -1,0 +1,41 @@
+# Assets: What the Show File Loads from Disk
+
+`dual-alpha-V16.toe` loads models and media that are not in this repository. They came in `TD.zip` (received 2026-11-12, 190 entries, 858 MB unpacked), all in its top folder `TD/`, next to Kaz's V15 file.
+
+> *Source: every file-path parameter in `expanded/dual-alpha-V16.toe.dir`, read on 2026-11-18, and the listing of `TD.zip`. V16 adds no file references; the list is the same as V15's. The V15 inside `TD.zip` is byte-identical to the one V16 was built from (MD5 `6c3dcf548071c977e65b8e78d359ccfa`).*
+
+---
+
+## Where to put the file
+
+**Model paths are relative, so the `.toe` must sit in the folder that holds the models.** The File In operators store bare file names such as `Face-mono2.obj`, which TouchDesigner resolves against the folder of the open project. So copy `dual-alpha-V16.toe` into the `TD/` folder, next to `20260108_Iterface2V15_Otherworld.toe`, and open it from there. Opened from `touchdesigner/` in the repo, the models will be missing.
+
+This folder's `.gitignore` keeps model, recording and media files out of git if they are copied here.
+
+## Loaded by the piece
+
+| File in `TD.zip` | Size | Loaded by (in `/project1/SYNCD`) | Role |
+|---|---|---|---|
+| `TD/Face-mono2.obj` (+ `.mtl`) | 2.6 MB | `filein5`, `filein6` | the two turning faces (`geo6`, `geo7`) |
+| `TD/Face-mono.obj` (+ `.mtl`) | 7.3 MB | `filein1` (POP), `filein2` (SOP) | the ring of copied faces (`geo2`), second look |
+| `TD/DECH-object only-STAND3.mtl.obj` (+ `.mtl.mtl`) | 1.6 kB | `filein3`, `filein4` | object shapes, via `switch2` / `switch3` |
+| `TD/SQUARE-object only-STAND3.obj` (+ `.mtl`) | 1 kB | `filein7`, `filein10` | object shapes |
+| `TD/SPHERE-object only-STAND2.obj` (+ `.mtl`) | 4.7 MB | `filein8`, `filein11` | object shapes |
+| `TD/TRI-object only-STAND2.obj` (+ `.mtl`) | 0.7 kB | `filein9`, `filein12` | object shapes |
+
+All six are stored as relative names. Each File In parameter also holds a fallback expression (`app.samplesFolder+'/Geo/defgeo.tog'`), but in constant mode, so it is not used.
+
+## Referenced but not needed for the piece
+
+| Reference | Where | Note |
+|---|---|---|
+| `EEG Channel Recordings/20260402_EEG_K1.3.chan` (relative) | `container1websocket_example/filein1` | V15's replay of a 25-slot recording. In V16 it only feeds the `ts` path when `switch1` is set to 0. A missing file gives a warning, nothing more |
+| `C:/Users/amind/Music/Mushishi/Mushishi Soundtrack[Mpgun.com].mp3` (absolute, Kaz's PC) | `/project1/audiofilein1` | audio source of the second scene; play is off |
+| `C:/Users/amind/Documents/Art Projects/VIRGIL RIVIERA/INTER-FACE 2.0/output/20260402_Interface2_K-K.mov` (absolute) | `/project1/moviefileout1` | screen-recording output path; set it per machine before recording T6 |
+| `Wave-container.tox` (relative) | `/project1/container5_ExpStarTutorial_Supermarketsallad1` external tox | external loading is off; the component is saved inside the file |
+| `../container1websocket_example.tox` | `container1websocket_example` external tox | off; the receiver is saved inside the file |
+| `app.samplesFolder + '/Geo/defcam.geo'`, `'/Map/Jellybeans.1.jpg'` | cameras, `sharpen` / `sharpen1` | TouchDesigner's own samples |
+
+## Not used by the file
+
+The rest of `TD.zip`: 18 other face and object models (`Face-duo`, `Face-Tri` … `Face-Ninei`, the non-`STAND` object variants), five Meshy `.glb` figures, the Blender sources (`interface2-0.blend` alone is 314 MB), 30 older `.toe` versions and `Backup/`, 17 `.chan` recordings, and `howto/`. The `howto` note holds a plain-text machine password; it is not copied anywhere and should be removed from the shared folder.

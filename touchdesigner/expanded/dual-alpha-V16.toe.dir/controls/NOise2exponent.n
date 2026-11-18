@@ -1,0 +1,6 @@
+COMP:slider
+v 73.0857 894.414 2.61143
+tile -400 -225 160 76
+flags =  viewer 1 activate on parlanguage 0
+color 0.55 0.55 0.55 
+end

@@ -1,0 +1,5 @@
+?
+tx 0 0
+ty 17 0 op('both_facecolor_speed')['chan1']
+extend 0 mirror
+?

@@ -1,0 +1,5 @@
+CHOP:keyboardin
+tile -925 -542 111 73
+flags =  parlanguage 0
+color 0.67 0.67 0.67 
+end

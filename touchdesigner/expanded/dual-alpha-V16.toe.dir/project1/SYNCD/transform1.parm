@@ -1,0 +1,5 @@
+?
+rotate 0 1
+sx 17 1.006 op('math1')['chan1']
+sy 17 1.006 op('math1')['chan1']
+?

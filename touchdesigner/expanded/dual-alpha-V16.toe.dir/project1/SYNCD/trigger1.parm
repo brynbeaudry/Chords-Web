@@ -1,0 +1,9 @@
+?
+threshup 48 0.96 parent(2).op('Controls/slider1').par.value0
+attack 0 0
+peaklen 0 0
+decay 0 0
+sustain 0 1
+release 0 0
+timeslice 0 on
+?

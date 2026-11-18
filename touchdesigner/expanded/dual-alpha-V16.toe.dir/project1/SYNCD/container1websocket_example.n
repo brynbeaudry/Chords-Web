@@ -1,0 +1,6 @@
+COMP:container
+v -186.338 17.2639 0.067061
+tile 3811 245 160 129
+flags =  picked on current on parlanguage 0
+color 0.67 0.67 0.67 
+end

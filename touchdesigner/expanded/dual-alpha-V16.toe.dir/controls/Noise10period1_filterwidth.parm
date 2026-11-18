@@ -1,0 +1,16 @@
+?
+label 0 Noise10period1_filterwidth
+value0 0 10
+value1 0 0.5
+valuerange0l 0 0.25
+valuerange0h 0 10
+w 0 100
+h 0 20
+top 0 ./back
+crop 0 on
+enablecloning 0 off
+clone 49 "" op.TDTox.op('defaultCOMPs/slider')
+enableexternaltox 0 off
+externaltox 48 "" "parent.sys.fileFolder + '/TDPackages/slider/slider.tox'"
+relpath 0 externaltox
+?

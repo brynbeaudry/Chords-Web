@@ -1,0 +1,6 @@
+CHOP:audiodevin
+tile -1700 -100 130 90
+flags =  bypass on parlanguage 0
+color 0.67 0.67 0.67 
+view -1 5 -1 1 0.034375 -1.5 1.5 4 3 10648 10 0 1 *
+end

@@ -1,0 +1,16 @@
+?
+noisesize 0 2
+seed 0 2.48
+period 0 0.29
+spread 0 4.1
+gain 0 0
+amp0 262144 0
+exp0 262144 1.42
+offset0 262144 0
+tx 0 0
+ty 0 0
+tz 17 0 absTime.seconds*0.2
+noise 0 on
+gradient 0 on
+computenormals 0 on
+?

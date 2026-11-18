@@ -1,0 +1,9 @@
+CHOP:analyze
+tile 2125 -3232 130 90
+flags =  parlanguage 0
+inputs
+{
+0 	noise4
+}
+color 0.67 0.67 0.67 
+end

@@ -1,0 +1,10 @@
+DAT:convert
+tile 3400 -1675 289 161
+flags =  viewer 1 parlanguage 0
+inputs
+{
+0 	merge1
+}
+color 0.67 0.67 0.67 
+view -1 8 0 1 1 1 0 0 0 0 1 1 0
+end

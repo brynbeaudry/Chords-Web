@@ -1,0 +1,9 @@
+CHOP:count
+tile -800 -177 130 90
+flags =  viewer 1 export on parlanguage 0
+inputs
+{
+0 	keyboardin1
+}
+color 0.67 0.67 0.67 
+end

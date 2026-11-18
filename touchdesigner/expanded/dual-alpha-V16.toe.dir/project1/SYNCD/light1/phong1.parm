@@ -1,0 +1,12 @@
+?
+diffr 0 0
+diffg 0 0
+diffb 0 0
+specr 0 0
+specg 0 0
+specb 0 0
+emitr 17 0 parent().par.cr
+emitg 17 0 parent().par.cg
+emitb 17 0 parent().par.cb
+shininess 0 88
+?

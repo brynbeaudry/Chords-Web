@@ -1,0 +1,6 @@
+?
+displaceweightx 0 0.005
+displaceweighty 0 0.005
+offsetweight 16 0 "1 - me.par.uvweight.eval()"
+extend 0 zero
+?

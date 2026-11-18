@@ -1,0 +1,11 @@
+?
+pageindex 0 1
+period 0 1.29
+amp 0 0.65
+tx 0 0
+ty 0 0
+tz 17 0 absTime.seconds*.07
+resolutionw 17 256 me.parent().width
+resolutionh 17 256 me.parent().height
+format 0 rgba32float
+?

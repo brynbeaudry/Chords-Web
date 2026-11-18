@@ -1,0 +1,19 @@
+?
+period 17 0.93 op('BNoise2period')['chan4']
+harmon 0 1
+spread 17 0.7 op('Noise2harmonicSpeed')['chan1']
+gain 17 0.37 op('Noise2HarmonicGain')['chan1']
+exp 49 1.57 op('NOise2exponent')['chan4']
+amp 0 1.28
+offset 0 0.143
+mono 0 off
+tx 17 2 absTime.seconds*0.05
+ty 17 20 absTime.seconds*0.01
+tz 17 300 absTime.seconds*0.02
+px 32 0
+py 32 0
+pz 32 2
+resolutionw 17 256 me.parent().width
+resolutionh 17 256 me.parent().height
+format 0 rgba32float
+?

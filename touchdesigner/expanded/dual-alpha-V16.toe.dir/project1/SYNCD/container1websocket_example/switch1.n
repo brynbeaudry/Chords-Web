@@ -1,0 +1,11 @@
+CHOP:switch
+tile 825 76 327 264
+flags =  viewer 1 parlanguage 0
+inputs
+{
+0 	filein1
+1 	rename1
+}
+color 0.67 0.67 0.67 
+view -1 5 -1 1 0.034375 -1.5 1.5 4 3 10648 10 0 1 *
+end

@@ -1,0 +1,6 @@
+DAT:text
+tile 6000 600 130 90
+flags =  parlanguage 0
+color 0.3 0.5 0.75 
+dock heads
+end

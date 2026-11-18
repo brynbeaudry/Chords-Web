@@ -1,0 +1,9 @@
+TOP:transform
+tile 3075 -425 130 105
+flags =  parlanguage 0
+inputs
+{
+0 	noise1
+}
+color 0.55 0.55 0.55 
+end

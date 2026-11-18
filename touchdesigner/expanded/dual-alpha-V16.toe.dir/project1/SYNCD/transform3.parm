@@ -1,0 +1,15 @@
+?
+tx 0 0
+ty 0 3.8
+tz 0 1.73
+rx 32 0
+ry 49 1 op('both_facecolor_speed2')['chan5']
+rz 32 0
+sx 0 1.7
+sy 0 1.7
+sz 0 1.7
+px 0 0
+py 0 31.6
+pz 0 0
+scale 0 0.66
+?

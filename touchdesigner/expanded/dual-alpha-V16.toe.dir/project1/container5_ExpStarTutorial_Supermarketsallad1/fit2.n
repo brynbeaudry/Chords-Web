@@ -1,0 +1,9 @@
+TOP:fit
+tile 5500 -1300 486 461
+flags =  viewer 1 parlanguage 0
+inputs
+{
+0 	transform4
+}
+color 0.67 0.67 0.67 
+end

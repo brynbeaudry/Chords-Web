@@ -1,0 +1,10 @@
+TOP:displace
+tile 4675 -3825 130 72
+flags =  parlanguage 0
+inputs
+{
+0 	rgbkey1
+1 	noise2
+}
+color 0.67 0.67 0.67 
+end

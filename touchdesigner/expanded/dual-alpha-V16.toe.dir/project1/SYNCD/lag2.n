@@ -1,0 +1,9 @@
+CHOP:lag
+tile -175 89 54 29
+flags =  parlanguage 0
+inputs
+{
+0 	hub
+}
+color 0.67 0.67 0.67 
+end

@@ -1,0 +1,5 @@
+COMP:slider
+tile -900 -1057 481 156
+flags =  viewer 1 parlanguage 0
+color 0.45 0.45 0.45 
+end

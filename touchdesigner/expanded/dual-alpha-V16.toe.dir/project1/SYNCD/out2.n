@@ -1,0 +1,10 @@
+TOP:out
+tile 5925 -2100 130 72
+flags =  display on parlanguage 0
+inputs
+{
+0 	comp5
+}
+color 0.55 0.55 0.55 
+view -1 3 0 -0.0217599 1 4 0 1 0 0 0
+end

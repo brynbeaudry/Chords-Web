@@ -1,0 +1,10 @@
+?
+type 0 simplex3d
+spread 0 7.3
+gain 16 0 op('Noise3_HarmoinicGainR')['chan1']
+amp0 16 0 op('FNoise3_AmpR')['chan1']
+tx 0 0
+ty 0 0
+tz 17 0 absTime.seconds*0.1
+noise 0 on
+?

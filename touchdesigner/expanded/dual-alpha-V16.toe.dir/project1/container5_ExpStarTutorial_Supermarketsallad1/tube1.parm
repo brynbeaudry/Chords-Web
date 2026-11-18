@@ -1,0 +1,9 @@
+?
+rx 0 0
+ry 17 13 absTime.seconds*3
+rz 0 0
+height 0 1.44
+anchoru 17 0.589 op('math1')['chan1']
+anchorv 0 0.839
+anchorw 0 0.7
+?

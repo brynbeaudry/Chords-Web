@@ -1,0 +1,7 @@
+?
+geometry 0 geo2
+uvunwrapcoordattrib 0 uv
+sampler0top 0 depth1
+resolutionw 49 1280 me.parent().width
+resolutionh 49 720 me.parent().height
+?

@@ -1,0 +1,5 @@
+CHOP:info
+tile 3825 -1825 452 255
+flags =  viewer 1 activate on parlanguage 0
+color 0.67 0.67 0.67 
+end

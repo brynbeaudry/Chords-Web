@@ -1,0 +1,12 @@
+?
+dat 0 ramp2_keys
+color1 0 0.082373
+color2 0 0.574157
+color3 0 0.455956
+color4 0 1
+phase 0 -0.9
+period 0 3.95
+interpnotches 32 easeineaseout
+dither 0 on
+operand 0 negate
+?

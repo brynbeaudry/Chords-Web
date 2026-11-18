@@ -1,0 +1,9 @@
+CHOP:select
+tile 7050 892 208 123
+flags =  activate on parlanguage 0
+inputs
+{
+0 	objectrotationspeeed/out1
+}
+color 0.67 0.67 0.67 
+end

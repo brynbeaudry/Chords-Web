@@ -1,0 +1,9 @@
+CHOP:null
+tile 275 -147 130 90
+flags =  parlanguage 0
+inputs
+{
+0 	count1
+}
+color 0.67 0.67 0.67 
+end

@@ -1,0 +1,14 @@
+?
+pageindex 0 1
+type 0 perlin3d
+exp 0 0.3
+amp 0 1
+offset 0 0
+tx 32 0
+ty 49 0 op('null1')['Speed1']*1
+tz 32 0
+sx 0 0.1
+sy 0 1.5
+sz 0 1
+format 0 rgba32float
+?

@@ -1,0 +1,4 @@
+?
+const0name 0 ts
+const0value 17 0 "(absTime.seconds * 125) % 1000000 if absTime.seconds - float(op('eeg_meta')['last_msg']) < 2 else (float(op('eeg_meta')['last_msg']) * 125) % 1000000"
+?

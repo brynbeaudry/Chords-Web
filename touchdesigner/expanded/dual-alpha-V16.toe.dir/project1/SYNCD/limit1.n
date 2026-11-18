@@ -1,0 +1,9 @@
+CHOP:limit
+tile 2150 -3382 130 90
+flags =  parlanguage 0
+inputs
+{
+0 	analyze1
+}
+color 0.67 0.67 0.67 
+end

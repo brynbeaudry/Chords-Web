@@ -1,0 +1,13 @@
+DAT:merge
+tile 3125 -1675 242 164
+flags =  viewer 1 parlanguage 0
+inputs
+{
+0 	null2
+1 	null2
+2 	null2
+3 	null2
+}
+color 0.67 0.67 0.67 
+view -1 8 0 1 1 1 0 0 0 0 1 1 0
+end

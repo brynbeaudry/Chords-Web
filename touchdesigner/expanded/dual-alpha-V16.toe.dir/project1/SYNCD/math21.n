@@ -1,0 +1,10 @@
+CHOP:math
+tile 5500 1525 130 76
+flags =  parlanguage 0
+inputs
+{
+0 	filter13
+1 	filter17
+}
+color 0.2 0.5 0.05 
+end

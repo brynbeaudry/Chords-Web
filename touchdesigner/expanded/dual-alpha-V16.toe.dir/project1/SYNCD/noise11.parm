@@ -1,0 +1,17 @@
+?
+type 0 perlin3d
+period 0 2
+harmon 0 0
+spread 0 0.6
+gain 0 0
+exp 0 0.82
+amp 0 0.58
+offset 0 0.077
+mono 0 off
+tx 0 0
+ty 0 0
+tz 17 0 absTime.seconds*.2
+resolutionw 17 256 me.parent().width
+resolutionh 17 256 me.parent().height
+format 0 rgba32float
+?

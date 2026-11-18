@@ -1,0 +1,9 @@
+CHOP:trigger
+tile -1100 178 130 90
+flags =  parlanguage 0
+inputs
+{
+0 	math5
+}
+color 0.05 0.05 0.5 
+end

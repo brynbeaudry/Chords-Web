@@ -1,0 +1,5 @@
+MAT:phong
+tile 108 47 70 50
+flags =  picked on current on viewer 1 parlanguage 0
+color 0.55 0.55 0.55 
+end

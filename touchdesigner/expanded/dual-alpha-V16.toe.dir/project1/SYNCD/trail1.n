@@ -1,0 +1,13 @@
+CHOP:trail
+tile 3800 765 400 270
+flags =  parlanguage 0
+inputs
+{
+0 	null17_clean
+1 	null18_limited
+2 	null17_audiospec_freq
+3 	null18_resampled
+}
+color 0.67 0.67 0.67 
+view -1 5 -1 1 0.034375 -1.5 1.5 4 3 10648 10 0 1 *
+end

@@ -1,0 +1,8 @@
+?
+tx 17 0 op('null3')['chan1']*0.01
+ty 0 0
+tz 0 0
+rx 0 0
+ry 17 -45 op('FrotatepositionL')['chan5']
+rz 0 0
+?

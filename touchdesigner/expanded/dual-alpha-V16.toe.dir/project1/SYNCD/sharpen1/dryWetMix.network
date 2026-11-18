@@ -1,0 +1,11 @@
+1
+compinputs
+{
+0 	in1
+	in2
+	TOP
+1 	convolve1
+	in3
+	TOP
+}
+end

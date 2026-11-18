@@ -1,0 +1,9 @@
+?
+pageindex 0 1
+threshold 0 off
+output 0 loop
+limitmax 0 9
+resetvalue 0 8
+timeslice 0 on
+exporttable 0 count2_export
+?

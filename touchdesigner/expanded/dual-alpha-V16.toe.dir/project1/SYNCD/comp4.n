@@ -1,0 +1,10 @@
+TOP:comp
+tile 4075 -4232 130 72
+flags =  parlanguage 0
+inputs
+{
+0 	edge2
+1 	comp1
+}
+color 0.67 0.67 0.67 
+end

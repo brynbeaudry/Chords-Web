@@ -1,0 +1,12 @@
+?
+pageindex 0 4
+w 17 400 op('project1').par.w
+h 17 300 op('project1').par.h
+align 0 gridrows
+spacing 0 67.6
+alignmax 0 3
+justifyh 0 center
+justifyv 0 center
+crop 32 never
+scrollbarthickness 0 28
+?
