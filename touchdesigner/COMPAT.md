@@ -111,6 +111,7 @@ execution. Verified bound — loopback answers, and the machine's own LAN addres
 | Goal | Command |
 |---|---|
 | the scripted scenario, forever | `python3 mock_sender.py --synthetic --loop` |
+| every head state, for checking the look | `python3 mock_sender.py --tour --loop` (90 s; both sides through away, solo reach, together, deeper, grey, stale) |
 | a recording at its own timing | `python3 mock_sender.py --file <session>.td_stream.jsonl --loop` |
 | TD on another machine | add `--host <PC address> --port 9000` (open port 9000 in the Windows firewall) |
 

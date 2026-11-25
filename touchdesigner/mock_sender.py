@@ -8,6 +8,7 @@ timing, or synthesises a two-person v2 stream that walks through every state of 
   python3 mock_sender.py --file session.td_stream.jsonl            # replay once
   python3 mock_sender.py --file session.td_stream.jsonl --loop     # replay forever
   python3 mock_sender.py --synthetic --loop                        # scripted 60 s scenario
+  python3 mock_sender.py --tour --loop                             # 90 s tour of every head state
   python3 mock_sender.py --synthetic --host 192.168.1.20 --port 9000
 
 Python 3 standard library only. If the `websockets` package is installed it is used
@@ -178,6 +179,91 @@ def scenario(t):
     return l1, ok1, l2, ok2, send
 
 
+TOUR_PERIOD = 90.0
+TOUR_WRONG_AT = 76.0
+
+
+def scenario_tour(t):
+    """Every documented head state, both sides, in one 90 s loop.
+
+    Dwell times are set by the head model, not by taste: REACH_RAMP and REACH_PERIOD are both
+    8 s, so a solo phase needs about 12 s before the reach has ramped up and dipped once.
+    DEPTH_MAX only shows at level 1, and the deeper head's extra turn needs a level lead of
+    0.5 (DEEPER_GAIN 2) to reach its full 5 degrees. Forgiveness is 1 s, so the short blink is
+    0.6 s and the real drop is 2.5 s.
+
+      0-4    apart            both away: R_ry +45, L_ry -45
+      4-16   person 1 solo    level 0.1 -> 1.0: turns forward, reach ramps, dips, depth adds 8 deg
+      16-19  apart            the return ease
+      19-31  person 2 solo    the same on the left side
+      31-33  apart
+      33-37  both in          equal (0.6 / 0.6): the heads swing to face each other over the 3 s ease,
+                              and the hold passes 3 s so the transition fires
+      37-43  both in          person 1 deeper (0.9 / 0.3): the right head turns further
+      43-49  both in          swapped (0.3 / 0.9): the left head turns further
+      49-52  both in          equal and deepest (1.0 / 1.0): symmetric, objects calmest
+      52-52.6 blink           person 1 drops 0.6 s, under Forgiveness: the hold continues
+      52.6-55 both in         hold continues
+      55-57.5 drop            person 1 out 2.5 s, over Forgiveness: the hold restarts
+      57.5-62 both in         hold rebuilds -> transition fires again
+      62-67  person 2 not ok  left side greys and turns away while person 1 stays in
+      67-72  person 1 not ok  the mirror: right side greys, person 2 stays in
+      72-75  both not ok      both grey
+      75-78  apart, ok        colour returns
+      76.0   wrong version    one v1-shaped message: contract_error until the next v2
+      78-85  silence          stale at 2 s (both grey), second scene at about 6 s
+      85-90  both in          back to the first scene
+    """
+    def ramp(a, b, t0, t1):
+        return a + (b - a) * min(1.0, max(0.0, (t - t0) / (t1 - t0)))
+    l1 = l2 = 0.0
+    ok1 = ok2 = 1
+    send = True
+    if t < 4:
+        pass
+    elif t < 16:
+        l1 = ramp(0.1, 1.0, 4, 15)
+    elif t < 19:
+        pass
+    elif t < 31:
+        l2 = ramp(0.1, 1.0, 19, 30)
+    elif t < 33:
+        pass
+    elif t < 37:
+        l1 = l2 = 0.6
+    elif t < 43:
+        l1, l2 = 0.9, 0.3
+    elif t < 49:
+        l1, l2 = 0.3, 0.9
+    elif t < 52:
+        l1 = l2 = 1.0
+    elif t < 52.6:
+        l1, l2 = 0.0, 1.0
+    elif t < 55:
+        l1 = l2 = 1.0
+    elif t < 57.5:
+        l1, l2 = 0.0, 1.0
+    elif t < 62:
+        l1 = l2 = 1.0
+    elif t < 67:
+        l1, ok2 = 0.8, 0
+    elif t < 72:
+        l2, ok1 = 0.8, 0
+    elif t < 75:
+        ok1 = ok2 = 0
+    elif t < 78:
+        pass
+    elif t < 85:
+        send = False
+    else:
+        l1 = l2 = 0.7
+    if not ok1:
+        l1 = 0.0
+    if not ok2:
+        l2 = 0.0
+    return l1, ok1, l2, ok2, send
+
+
 class Wave:
     """A plausible filtered occipital EEG trace at 125 Hz, in the app's own scale.
 
@@ -222,17 +308,17 @@ class Wave:
         return round((background_uv + alpha_uv + beta_uv) * UV, 5)
 
 
-def synthetic(loop):
+def synthetic(loop, scen=None, period=60.0, wrong_at=47.0):
+    scen = scen or scenario
     w1, w2 = Wave(1, 10.0), Wave(2, 9.5)
     n = 0
-    period = 60.0
     t = 0.0
     sent_wrong = False
     while True:
         tl = t % period
         if tl < HOP_S:
             sent_wrong = False
-        l1, ok1, l2, ok2, send = scenario(tl)
+        l1, ok1, l2, ok2, send = scen(tl)
         d1 = [w1.sample(n + i, l1, ok1) for i in range(BATCH)]
         d2 = [w2.sample(n + i, l2, ok2) for i in range(BATCH)]
         if send:
@@ -241,7 +327,7 @@ def synthetic(loop):
                    'd2_level': round(l2, 3), 'd2_ok': ok2, 'pair_level': round(pair, 3),
                    'd1_w': d1, 'd2_w': d2}
             yield t, msg
-            if 47.0 <= tl < 47.0 + HOP_S and not sent_wrong:
+            if wrong_at <= tl < wrong_at + HOP_S and not sent_wrong:
                 sent_wrong = True
                 yield t, {'ts': n, 'd1_ch0': d1[0], 'd1_ch1': d1[1], 'd1_ch2': d1[2],
                           'd2_ch0': d2[0], 'd2_ch1': d2[1], 'd2_ch2': d2[2]}     # v1 shape: no "v"
@@ -282,6 +368,7 @@ def main():
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument('--file', help='td_stream.jsonl recorded by the Dual Alpha page')
     src.add_argument('--synthetic', action='store_true', help='send the scripted 60 s two-person scenario')
+    src.add_argument('--tour', action='store_true', help='send the 90 s tour of every documented head state, both sides')
     ap.add_argument('--host', default='127.0.0.1')
     ap.add_argument('--port', type=int, default=9000)
     ap.add_argument('--loop', action='store_true', help='repeat forever')
@@ -291,7 +378,12 @@ def main():
     ap.add_argument('--quiet', action='store_true')
     a = ap.parse_args()
 
-    gen = synthetic(a.loop) if a.synthetic else replay(a.file, a.loop)
+    if a.tour:
+        gen = synthetic(a.loop, scenario_tour, TOUR_PERIOD, TOUR_WRONG_AT)
+    elif a.synthetic:
+        gen = synthetic(a.loop)
+    else:
+        gen = replay(a.file, a.loop)
     try:
         ws = connect(a.host, a.port, a.stdlib)
     except (OSError, ConnectionError) as e:

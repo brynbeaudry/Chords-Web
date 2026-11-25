@@ -142,6 +142,19 @@ With Chords-Web open and TouchDesigner running:
   ```
   It plays a 60 s scripted two-person scenario (one person in, then both, a short drop, a lost signal, one bad message). Add `--host <address> --port 9000` for a TouchDesigner on another computer. Close the Chrome tab first: only one sender at a time.
 
+  **To check the look rather than the link, use `--tour` instead of `--synthetic`:**
+  ```
+  python mock_sender.py --tour --loop --stdlib
+  ```
+  A 90 s loop that walks both sides through every state the faces can be in: turned away,
+  one person in alone (turning forward, reaching across and dipping back, reaching further
+  as they go deeper), both in facing each other, each one being the deeper of the two,
+  the shortest blink that Forgiveness absorbs, a longer drop that restarts the hold, each
+  side greying on its own, both grey, a wrong-version message, and a silence long enough
+  to reach the second scene. The transition fires three times a loop. Use this when
+  judging whether the piece looks right; use `--synthetic` when checking the plumbing,
+  because its timings are the ones quoted in the checks.
+
   **Add `--stdlib` for anything left running.** Without it the sender uses the `websockets` package, which pings the socket and hangs up with `keepalive ping timeout` when TouchDesigner's Web Server DAT does not answer — a loop left running for a few minutes dies on its own. `--stdlib` uses the sender's own client, which does not ping; a 100 s loop ran clean. On Windows the command is `python`, not `python3`.
 
 **In the scripted scenario you should see**, in each 60 s loop: from about 5 s the right head turns forward and reaches toward the left and back; at about 15 s both heads turn to face each other; about 3 s later the transition plays; at about 38 s the right object goes grey and its head turns away; at 47 s **CONTRACT ERROR** flashes once.
