@@ -216,6 +216,30 @@ measured: after about **2 seconds** without data the two objects grey out, and a
 background does not grey, it changes scene. Start the next pair and it returns to the first
 scene within 2 seconds, with the colour easing back over about a second. Nothing to press.
 
+### Sound
+
+The piece now plays a drum-and-bass break that the two people mix between them. It goes to
+**the computer's default audio output** — `/project1/audiodevout2` has both Driver and Device
+set to `default`, so it follows whatever Windows is using, and the mono mix is cycled to both
+front channels. Nothing to configure on a new laptop beyond having an output selected.
+
+| What you hear | Driven by |
+|---|---|
+| tempo, roughly 139–200 BPM | `pair_level` — it drives harder when both are in alpha |
+| snare, swing, echo, filter resonance | `pair_level` |
+| kick weight, bass level, distortion, bass EQ | person 2 (the left side) |
+| hats, how far the kick opens the bass filter, treble EQ | person 1 (the right side) |
+| silence | no data: everything is muted by `stale`, so quiet means nobody is connected |
+
+**To turn the sound off**, set `/project1/filein_or_AudioLinein` **Index** back to **1**. That
+restores Kaz's line-in path exactly. Note the output chain shipped *bypassed* in V15, which is
+why the file used to be silent; the bypass is now cleared on `filein_or_AudioLinein`, `null1`
+and `audiodevout2`, and re-setting those three bypasses gets the silence back.
+
+The stems live in the `TD/` folder next to the `.toe` (`break_*.wav`) and are referenced by
+bare filename, like the models — so if the piece is silent but the visuals work, check they
+were copied across.
+
 ### Things that have bitten us on this machine
 
 - **Chrome is not installed; Edge is what is actually used.** Edge is Chromium, so Web Bluetooth

@@ -1,0 +1,9 @@
+CHOP:delay
+tile -1200 1020 130 90
+flags =  parlanguage 0
+inputs
+{
+0 	dnb_hatoff
+}
+color 0.85 0.55 0.2 
+end

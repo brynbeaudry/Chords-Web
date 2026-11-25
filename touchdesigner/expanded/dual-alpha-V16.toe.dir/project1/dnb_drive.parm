@@ -1,0 +1,6 @@
+?
+inputgain 17 6.0 16.0*op('SYNCD/container1websocket_example/STATE')['d2_level']
+enablelimiter 0 on
+thresholdlimiter 0 -1
+timeslice 0 on
+?

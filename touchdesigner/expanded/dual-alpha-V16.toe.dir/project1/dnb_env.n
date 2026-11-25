@@ -1,0 +1,9 @@
+CHOP:filter
+tile -1050 1500 130 90
+flags =  parlanguage 0
+inputs
+{
+0 	dnb_envabs
+}
+color 0.85 0.55 0.2 
+end

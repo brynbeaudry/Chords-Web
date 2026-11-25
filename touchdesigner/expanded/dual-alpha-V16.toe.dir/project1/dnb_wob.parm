@@ -1,0 +1,5 @@
+?
+frequency 17 3.0 1.5+6.0*op('SYNCD/container1websocket_example/STATE')['pair_level']
+amp 0 1
+timeslice 0 on
+?

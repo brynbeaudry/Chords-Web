@@ -1,0 +1,10 @@
+CHOP:math
+tile -100 1200 130 90
+flags =  parlanguage 0
+inputs
+{
+0 	dnb_eq
+1 	dnb_echolvl
+}
+color 0.85 0.55 0.2 
+end

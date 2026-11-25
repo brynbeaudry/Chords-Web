@@ -1,0 +1,4 @@
+?
+gain 17 0.25 0.12+0.38*op('SYNCD/container1websocket_example/STATE')['pair_level']
+timeslice 0 on
+?

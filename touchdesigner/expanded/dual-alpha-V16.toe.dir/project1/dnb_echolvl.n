@@ -1,0 +1,9 @@
+CHOP:math
+tile -250 1360 130 90
+flags =  parlanguage 0
+inputs
+{
+0 	dnb_echo
+}
+color 0.85 0.55 0.2 
+end
