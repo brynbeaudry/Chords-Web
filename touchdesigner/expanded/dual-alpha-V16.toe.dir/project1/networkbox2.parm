@@ -11,6 +11,7 @@ ext0promote 256 on
 parentshortcut 256 Annotate
 clone 17 "" "op.TDAnnotate.op('annotate', includeUtility=True)"
 Bodyfontsize 67109056 10
+Bodytext 67109056 ""
 Titletext 67108928 "Audio In"
 Version 67109184 1.0
 Bodylimitwidth 67109056 off
@@ -18,6 +19,7 @@ Bodymaxwidth 67109056 1000
 Backcolorr 67108945 0.45 "me.color[0] # node color [r]"
 Backcolorg 67108945 0.45 me.color[1]
 Backcolorb 67108945 0.45 "me.color[2] "
+Bodywordwrap 67109056 on
 Mode 67108928 networkbox
 Opviewer 67109056 ""
 Opviewerinteractive 67109056 off

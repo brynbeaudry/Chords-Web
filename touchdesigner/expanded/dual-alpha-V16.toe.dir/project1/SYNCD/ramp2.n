@@ -1,6 +1,6 @@
 TOP:ramp
 tile 2775 -3832 130 72
-flags =  parlanguage 0
+flags =  current on parlanguage 0
 inputs
 {
 0 	noise1

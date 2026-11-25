@@ -1,0 +1,9 @@
+CHOP:trail
+tile 2800 400 130 90
+flags =  parlanguage 0
+inputs
+{
+0 	wave_gain
+}
+color 0.3 0.5 0.75 
+end

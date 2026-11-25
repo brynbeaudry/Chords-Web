@@ -1,12 +1,11 @@
 ?
 const0name 0 d1_level
-const0value 0 0
 const1name 0 d1_ok
-const1value 0 0
+const1value 0 1
 const2name 0 d2_level
 const2value 0 0
 const3name 0 d2_ok
-const3value 0 0
+const3value 0 1
 const4name 0 pair_level
 const4value 0 0
 ?

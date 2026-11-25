@@ -286,7 +286,7 @@ def main():
     files = set()
     for root, ds, fs in os.walk(NEW_D):
         for f in fs:
-            files.add(os.path.relpath(os.path.join(root, f), NEW_D))
+            files.add(os.path.relpath(os.path.join(root, f), NEW_D).replace(os.sep, '/'))
     toc = set(new.toc)
     print('[1] toc entries %d, files %d, in toc not on disk %d, on disk not in toc %d, duplicate toc lines %d'
           % (len(new.toc), len(files), len(toc - files), len(files - toc), len(new.toc) - len(toc)))

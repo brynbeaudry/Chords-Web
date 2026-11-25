@@ -3,6 +3,22 @@
 What changed between Kaz's show file `20260108_Iterface2V15_Otherworld.toe` (V15) and `dual-alpha-V16.toe`, written so that each step can be checked, or redone by hand in TouchDesigner, without design decisions. The plan behind it is `docs/alpha-v2/dual-alpha-route-2026-11-18.md` §6 and §9.3.
 
 > *V16 was built on a Mac without running TouchDesigner. It was made by editing the text form of V15 (TouchDesigner's own `toeexpand` / `toecollapse`, build 2025.33230) with `scripts/build_v16_from_v15.py`, which applies exactly the steps below. Items marked [confirm] are inferred, not observed, and are listed again in [Confirm on first open](#confirm-on-first-open).*
+>
+> *Since then V16 **has** been run, in TouchDesigner 2025.33230 on Windows, against
+`mock_sender.py`. It loads with no fatal error. Settled by running it: [item 3](#confirm-on-first-open)
+(the waveform lines, [A5b](#a-the-receiver-ws)), [item 12](#confirm-on-first-open) (the A4 `ts_clock`
+drives `timer1`/`switch2` correctly — `switch2.index` and `timer1['done']` both read 0 with data
+flowing, so the piece stays on the first scene), and [B0](#b-the-pair-and-the-heads-sy), which is a
+trap rather than a change. A Windows rebuild was byte-identical to the Mac-built file
+(MD5 `d3a6148f737181d2dfa689d2634ba803`), so the toolchain agrees across platforms.*
+>
+> ***This file is no longer reproducible from `scripts/build_v16_from_v15.py`.*** *It has since been
+saved from TouchDesigner and edited by hand, so `expanded/` and the `.toe` are the record. Two things
+to know about a TD save: it omits every parameter sitting at its default (which makes
+`verify_toe.py` report one phantom failure, for `contract_error`'s `const0`), and it serialises OP
+storage into the file — a save carried a stale `absTime`, `pair_logic`'s `hold_s` latched at 7.57 s
+against a 3 s Hold time, and `wave`'s whole ring buffer. Clear those with
+`op('wave').unstore('*')` or by deleting the `dict` lines from the expanded `.n` files.*
 
 ---
 
@@ -16,7 +32,7 @@ flowchart TB
     ST["state_calc → STATE<br/>stale over 2 s → both not ok"]
     WV["wave · Script CHOP<br/>d1_w, d2_w at 125 Hz, 250 ms behind"]
     SL["wave_slot1–3 → wave_slots<br/>chan1–3 = person 1, chan4–6 = person 2"]
-    OLD["null1 → limit1 · audiospect1 (FFT 128) · trail1<br/>→ the V15 selects, filters and maths, unchanged"]
+    OLD["null1 → limit1 · audiospect1 (FFT 128) · trail1 → the V15 look, untouched<br/>null1 → wave_gain (×20) → trail_wave → the two waveform lines<br/>→ the V15 selects, filters and maths, unchanged"]
     PL["pair_logic · Script CHOP<br/>Hold time · Relative alpha sync · Forgiveness"]
     F18["filter18 · 3 s ease (kept)"]
     HD["heads · Script CHOP<br/>per-side turn, reach and dip"]
@@ -38,9 +54,9 @@ flowchart TB
 
 | | V15 | V16 |
 |---|---|---|
-| Operators | 630 | 643 (29 removed, 42 added) |
-| Files in the expanded text | 1397 | 1425 (44 removed, 63 added, 15 edited) |
-| `.toe` size | 57 690 bytes | 69 458 bytes |
+| Operators | 630 | 646 (29 removed, 45 added) |
+| Files in the expanded text | 1397 | 1431 (44 removed, 69 added, 21 edited) |
+| `.toe` size | 57 690 bytes | 69 602 bytes |
 | Message the receiver accepts | v1, 25 slots by index | contract v2 only; anything else lights `contract_error` |
 
 New operators are tinted blue in the network editor.
@@ -115,6 +131,41 @@ and set the input of `WS/rename1` to `ts_clock` (was `null`). The path `rename1 
 - Set the input of `WS/null1` to `wave_slots` (was `timeslice1`).
 - Check: `WS/wave` info shows `sample_rate` 125 and `time_slice` 1; `null1` shows `chan1`, `chan4`, `chan2`, `chan5`, `chan3`, `chan6` and keeps moving smoothly when one message is dropped.
 
+**A5b. The waveform lines: their own gained copy.** *Observed on the first real opens.* The two lines (`geo1` and `geo5`, one each side) drew straight white vertical streaks instead of waves. They are fed by `WS/select1` (`chan1`, person 1) and `WS/select2` (`chan4`, person 2) → `filter2` / `filter1` → `trail3` / `trail2` → `chopto1` (`ty chan1`) / `chopto2` (`tx chan4`), so the channel value *is* each point's position along the line: a signal near zero puts every point in the same place and the line comes out straight.
+
+The signal really is near zero at this scale. The page high-passes the ADC counts and scales them by 2/4096 (`yScale`, `src/components/filters.tsx`), and one count is about 0.548 µV (`UV_PER_COUNT`, `src/lib/dual-alpha/signalChain.ts`), so a 30–100 µV peak-to-peak occipital signal arrives as about **±0.013 to ±0.045**. It needs a gain before it can read as a wave.
+
+- Add Math CHOP `WS/wave_gain` fed by `null1`, `gain` **20**.
+- Add Trail CHOP `WS/trail_wave` fed by `wave_gain`, `timeslice` **on**.
+- Set the inputs of `WS/select1` and `WS/select2` to `trail_wave` (both were `trail1`).
+- `WS/trail2` and `WS/trail3` (what `chopto2` / `chopto1` read) were on **Grow Length**, which per the Trail CHOP help "will keep getting longer as the timeline moves forward" — an unbounded recording, so the lines accumulated the whole session. Set `growlength` **off**, `wlength` **10**, `wlengthunit` **seconds**, for a fixed 10 s window.
+- `SY/geo1` and `SY/geo5` (the two line geometries, fed by `WS/out1` / `WS/out2`, rendered by `SY/render6`) had no material, so they rendered one pixel wide. Add Wireframe MAT `SY/waveline` with `linewidth` **14** and set `material` on both to `waveline`. The same pattern is already used in this project (`container5/geo1` assigns `container5/wireframe1`).
+
+> *Confirmed on screen. `linewidth` 3 was too small a change to see, which briefly looked like the material was not reaching the geometry at all; 10 was plainly thicker, and 14 is the value settled on by eye. No Line MAT is needed.*
+- **Three knobs, none of which affects anything else: `WS/wave_gain` `gain` for height, `trail2` / `trail3` `wlength` for length, `SY/waveline` `linewidth` for thickness.**
+
+> *`wlengthunit` is written as `seconds`. No file in V15, in V16 or in the TouchDesigner install stores that parameter, so the token could not be copied from a known-good example — if the lines come back far too short, the unit fell back to Samples and the token is wrong.*
+
+**The width only applies because `render6`'s Material Override points at `waveline`.** `SY/render6` carried `overridemat = pbr5`, and a Render TOP's override replaces the material on *every* geometry it renders — so `geo1`/`geo5`'s own `material` parameter was read and then discarded. Until the override itself was re-pointed, no material and no width had any effect: a Wireframe MAT at `linewidth` 3, 10 and 28, and a Line MAT at width 4, 8 and 40, all drew the same one-pixel line. `geo1` and `geo5` are therefore left exactly as V15 and only `overridemat` is changed.
+
+Two further things about the Line MAT, both learned the hard way:
+
+- A **Wireframe** MAT is the wrong operator: its `linewidth` is the GL line width, which current drivers clamp to 1 pixel. The Line MAT emits real polygons per segment (`drawlines`), so its width is geometry and cannot be clamped.
+- `depthinterpolationmodel` defaults to `inversedistance`, which divides the width by camera distance. `scurve` with `widthnear` == `widthfar` gives a width that ignores distance.
+
+**`limit1` is deliberately left exactly as V15.** Two earlier attempts changed it and both were wrong, so the reasoning is worth keeping:
+
+| Attempt | What it did | Why it failed |
+|---|---|---|
+| Normalize off, fixed gain, clamp ±1 on `limit1` | assumed the lines read `limit1` through `trail1` | they do not: `trail1` has four inputs with colliding channel names, and the lines were reading the raw `null1` channels, so the trace did not change at all |
+| Math CHOP between `limit1` and `out2_limit` | aimed to give object height more travel | `out2_limit` feeds **seven** V15 consumers, and five are background noise parameters — `Noise10exponent` (`select3`), `Noise2HarmonicGain` (`select6`), `Noise10period` (`select2`), `BNoise2period` (`select4`), `NOise2exponent` (`select8`) — besides `SpositionR` (`select9`) and `SpositionL` (`select10`). Swinging them washed the background colours out |
+
+So anything that wants a different amplitude takes its own copy off `null1`, as `wave_gain` does, and `limit1` keeps feeding the V15 look untouched. `limit1.n`, `limit1.parm` and `out2_limit.n` are byte-identical to V15.
+
+*(`SY/math1` and `SY/math2` are **not** on this path despite their names: they read `SY/limit1` ← `analyze1` ← `noise4`, an internal Noise CHOP with nothing to do with the headsets.)*
+
+**Still open: object height barely moves.** `select9` / `select10` go through a **3 s** Filter, and a 3 s average of a zero-mean wave nearly cancels. Measured against the synthetic stream, V15's Normalize left this path at **mean 0.499 with a range of 0.008**, identical for a resting and a strongly-alpha person — so it never tracked alpha in V15 either. Giving it real travel means either an envelope (a Function CHOP `abs` before the Filter, so it follows amplitude rather than averaging to zero) or a shorter Filter width. Both change the look, so they are a decision for the T6 check, not an inference.
+
 What each former channel reads now. Every consumer keeps its V15 Filter width and Math mapping; only the source changed.
 
 | Old slot | Was | Now | Read by (in `SY` unless marked `WS`): select → filter width → what it drives |
@@ -137,6 +188,21 @@ What each former channel reads now. Every consumer keeps its V15 Filter width an
 **A8. Remove the 25-slot plumbing that only the old callback fed:** `WS/constant_eeg`, `WS/null`, `WS/fileout1` (it recorded `constant_eeg` to a `.chan`). `filein1` and `switch1` stay: switching `switch1` to 0 now only replays an old recording into `ts`.
 
 ### B. The pair and the heads (`SY`)
+
+**B0. `wave` must keep writing `numSamples`, warning and all.** *Found by running it.* The Textport fills, once per cook, with:
+
+```
+wave_callbacks:58: tdWarning: Editing numSamples is not supported in Time Slice mode.
+```
+
+**Do not "fix" this by removing the write.** TouchDesigner warns but *applies* it. Removed, `wave` sits at **1** sample per cook instead of the 2.083 its 125 Hz rate implies at 60 fps, and two things break:
+
+- the waveform is starved, playing ~60 samples a second instead of 125;
+- `WS/limit1` receives a single sample, and the Limit CHOP's Normalize cannot scale one value into −1…+1, so it outputs **0.0** — which pins `SpositionR` / `SpositionL` and the five background noise parameters that hang off `out2_limit`. The objects stop moving and the background goes flat.
+
+Measured on the running file: with the write, `wave` `numSamples` 4 and `limit1` `chan1` = `[-1.0, -0.476, 0.450, 1.0]`; without it, `numSamples` 1 and `limit1` `chan1` = `[0.0]` while its input `null1` was still live at `-0.00444`.
+
+`heads_callbacks` and `pair_logic_callbacks` carry the same warning and are also left alone. Setting `isTimeSlice = False` there was tried and reverted: `heads` `cookFrame` was advancing (791 → 902) either way, so the warning was costing nothing. The Limit CHOP help is the thing to remember — *"The Normalize function does not work with Time Slicing on"* — so anything downstream of a time-sliced CHOP must not rely on Normalize.
 
 **B1. Remove the waveform comparison and its slider:** `select16`, `select17`, `filter15`, `filter16`, `math13`, `math14`, `math18`, `logic1`, `math19`, `math23`, the slider COMP `Sync_Trigger`, and the old angle maps `math15`, `math16`, `math17`.
 
@@ -200,7 +266,7 @@ Everything here was inferred without running TouchDesigner. Each line says what 
 |---|---|---|---|
 | 1 | The file opens without errors (Textport, red operator flags) | open `dual-alpha-V16.toe` from the folder holding the models ([ASSETS.md](ASSETS.md)) | most likely a parameter written in an unexpected form; compare with `expanded/` |
 | 2 | `wave` is time sliced at 125 Hz | Info CHOP on `WS/wave`: `sample_rate` 125, `time_slice` 1, 1–3 samples per frame | set `TIMESLICE = False` in `wave_callbacks` (one sample per frame at the timeline rate), and tell us |
-| 3 | `limit1` (Normalize on) behaves like V15 with 2 samples a frame instead of 1 | positions and noise move as in V15 (T6 recording) | the Limit normalizes per time slice; if the motion is too jumpy, try `limit1` Normalize off and compare |
+| 3 | ~~`limit1` (Normalize on) behaves like V15 with 2 samples a frame instead of 1~~ **Settled, but not where it looked.** The two waveform lines drew straight streaks because they carry the raw signal, which is only about ±0.013 to ±0.045; they now take a gained copy ([A5b](#a-the-receiver-ws)). `limit1` itself is left exactly as V15, because `out2_limit` also drives five background noise parameters. | each line reads as a wave; the background keeps its V15 colours | tune only `WS/wave_gain` `gain`. Object height is a separate, still-open question (see A5b) |
 | 4 | Audio Spectrum look at FFT 128 | T6 side-by-side | 64 halves the window |
 | 5 | Constant pars written as `const{i}value` from Python | `eeg` follows the stream | the callback already falls back to `value{i}` |
 | 6 | `onGetCookLevel` and `CookLevel.ALWAYS` exist in 2025.33230 | the three Script CHOPs cook every frame (cook count rises without input changes) | delete `onGetCookLevel`; they still cook every frame because they read `absTime` |

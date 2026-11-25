@@ -8,6 +8,10 @@
 //   ?enter=4        enter level in dB (exit = enter - 3)
 //   ?debug=1        log every hop and message to the console
 // Keys: C = eyes-closed block starts, O = eyes-open block starts, X = end of block (hand marks).
+// Calibrate runs the guided 20 s check (plan §P6, src/lib/dual-alpha/calibration.ts): 10 s eyes
+// closed then 10 s eyes open, which sets each person's own alpha ceiling. The button always
+// re-enters the check, so every new pair moving through the piece gets its own ceilings; a
+// person with too little signal simply stays uncalibrated on the 12 dB default.
 // /dual-stream (with V15) is the untouched fallback.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTheme } from 'next-themes';
@@ -20,10 +24,12 @@ import { DualAlphaEngine, type Slot, type TdMessageV2 } from '@/lib/dual-alpha/e
 import { DeviceChart, type HandMarkKind } from '@/lib/dual-alpha/chart';
 import { Recorder, Replayer, parseRecordingCsv, type Row } from '@/lib/dual-alpha/recorder';
 import { useDualNpg } from '@/lib/dual-alpha/useDualNpg';
-import { levelFromProm } from '@/components/DyadState';
+import { levelFromProm, median } from '@/components/DyadState';
 import { UV_PER_COUNT } from '@/lib/dual-alpha/signalChain';
+import { Calibration, type CalPhase } from '@/lib/dual-alpha/calibration';
 import SignalChip from '@/components/dual-alpha/SignalChip';
 import DetectorLane from '@/components/dual-alpha/DetectorLane';
+import CalibrationDialog from '@/components/dual-alpha/CalibrationDialog';
 
 const FS = 500;
 const SLOTS: Slot[] = [1, 2];
@@ -79,6 +85,13 @@ export default function DualAlphaPage() {
     const cfgRef = useRef<Config | null>(null);
     const replayingRef = useRef(false);
 
+    // ─── the guided 20 s check (plan §P6) ───
+    // The operator may re-enter it at any time, which is how each new pair moving through the
+    // piece gets its own ceilings.
+    const calRef = useRef(new Calibration());
+    const [calPhase, setCalPhase] = useState<CalPhase>('idle');
+    const [calElapsedS, setCalElapsedS] = useState(0);
+
     // ─── per-sample path, shared by live and replay ───
     const handleSample = useCallback((slot: Slot, counter: number, raw: number[], tMs: number, live: boolean) => {
         const engine = engineRef.current, c = cfgRef.current;
@@ -115,6 +128,13 @@ export default function DualAlphaPage() {
                 level: person.level, ok: person.ok, turnedOn: personOn && !prev.person, medianPromDb: person.medianPromDb,
             });
             prev.person = personOn;
+            // feed the 20 s check from the same hops the detector produces, so a replay
+            // calibrates exactly as a live session does
+            const cal = calRef.current;
+            if (cal.running) {
+                const iafs = st.map((s) => s.reading?.iafHz).filter((v): v is number => Number.isFinite(v));
+                cal.push(slot, person.medianPromDb, iafs.length ? median(iafs) : NaN, tMs);
+            }
             if (c.debug) {
                 console.log(`[D${slot} hop t=${(tMs / 1000).toFixed(2)}s]`, st.map((s, i) =>
                     `${CHANNEL_LABELS[i]} ${s.reading?.isAlpha ? 'α' : '-'} prom ${s.reading?.promDb.toFixed(2)} iaf ${s.reading?.iafHz} hf ${s.reading?.hfDb.toFixed(2)} art ${s.reading?.artifact ? 1 : 0} ${s.quality}`).join(' | '),
@@ -299,6 +319,59 @@ export default function DualAlphaPage() {
         setFiles(await recorderRef.current.list());
     };
 
+    // ─── calibration controls ───
+    // Applying keeps each person independent: one headset being silent leaves that person on
+    // the 12 dB default instead of spoiling the other's ceiling.
+    const applyCalibration = useCallback(() => {
+        const engine = engineRef.current, cal = calRef.current;
+        if (!engine) return;
+        const lines = SLOTS.map((s) => {
+            const r = cal.result(s);
+            if (!r) return `P${s}: too little signal — stays uncalibrated`;
+            engine.ceilingDb[s] = r.ceilingDb;
+            const iaf = Number.isFinite(r.closedIafHz) ? `${r.closedIafHz.toFixed(0)} Hz` : 'no peak';
+            return `P${s}: ceiling ${r.ceilingDb.toFixed(1)} dB · ${iaf}`;
+        });
+        setTick((t) => t + 1);
+        toast.success(lines.join('     '));
+    }, []);
+
+    const startCalibration = useCallback(() => {
+        calRef.current.start(performance.now());
+        setCalPhase('closed');
+        setCalElapsedS(0);
+    }, []);
+
+    const confirmCalibration = useCallback(() => {
+        const now = performance.now();
+        calRef.current.confirm(now);
+        setCalElapsedS(calRef.current.elapsedS(now));
+        applyCalibration();
+        setCalPhase('done');
+    }, [applyCalibration]);
+
+    const closeCalibration = useCallback(() => {
+        calRef.current.cancel();
+        setCalPhase('idle');
+    }, []);
+
+    // the countdown and the automatic closed -> open -> done advance
+    useEffect(() => {
+        if (calPhase !== 'closed' && calPhase !== 'open') return;
+        const id = setInterval(() => {
+            const cal = calRef.current;
+            const phase = cal.tick(performance.now());
+            setCalElapsedS(cal.elapsedS(performance.now()));
+            if (phase === 'done') {
+                applyCalibration();
+                setCalPhase('done');
+            } else {
+                setCalPhase(phase);
+            }
+        }, 200);
+        return () => clearInterval(id);
+    }, [calPhase, applyCalibration]);
+
     // ─── render ───
     const engine = engineRef.current;
     const nowMs = performance.now();
@@ -308,6 +381,17 @@ export default function DualAlphaPage() {
     return (
         <div className="flex flex-col min-h-screen bg-g">
             <div className="bg-highlight"><Navbar isDisplay={true} /></div>
+
+            <CalibrationDialog
+                phase={calPhase}
+                elapsedS={calElapsedS}
+                counts={{ 1: calRef.current.counts(1), 2: calRef.current.counts(2) }}
+                usable={{ 1: calRef.current.result(1) !== null, 2: calRef.current.result(2) !== null }}
+                names={{ 1: devices[1].connected ? devices[1].name : '', 2: devices[2].connected ? devices[2].name : '' }}
+                onConfirm={confirmCalibration}
+                onRestart={startCalibration}
+                onClose={closeCalibration}
+            />
 
             <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-gray-200 dark:border-gray-800 text-sm">
                 {SLOTS.map((s) => (
@@ -320,6 +404,11 @@ export default function DualAlphaPage() {
                     <span className={`inline-block h-2.5 w-2.5 rounded-full ${tdConnected ? 'bg-green-500' : 'bg-gray-400'}`} />
                     TD {tdConnected ? 'connected' : 'searching'} · {msgCount.current} sent
                 </span>
+                {/* always re-enters the check, so each new pair gets its own ceilings */}
+                <Button variant="outline" className="rounded-xl" disabled={!!replay} onClick={startCalibration}
+                    title="Run the 20 s check: 10 s eyes closed, then 10 s eyes open">
+                    Calibrate
+                </Button>
                 <Button className={`rounded-xl ${recording ? 'bg-red-600 hover:bg-red-500 text-white' : ''}`} onClick={toggleRecord}
                     disabled={!!replay}>
                     {recording ? `Stop recording ${String(Math.floor(elapsed / 60)).padStart(2, '0')}:${String(elapsed % 60).padStart(2, '0')}` : 'Record'}

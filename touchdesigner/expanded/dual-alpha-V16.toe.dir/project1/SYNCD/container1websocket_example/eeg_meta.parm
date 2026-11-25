@@ -1,12 +1,12 @@
 ?
 const0name 0 n
-const0value 0 0
+const0value 0 300096
 const1name 0 last_msg
-const1value 0 0
+const1value 0 2417.35
 const2name 0 msgs
-const2value 0 0
+const2value 0 17977
 const3name 0 bad_msgs
-const3value 0 0
+const3value 0 40
 const4name 0 lost_samples
 const4value 0 0
 ?

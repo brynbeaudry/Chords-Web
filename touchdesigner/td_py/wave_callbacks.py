@@ -55,6 +55,10 @@ def _emit(scriptOp, cols, rate, timeslice):
 	scriptOp.clear()
 	scriptOp.rate = rate
 	scriptOp.isTimeSlice = timeslice
+	# TD warns that numSamples cannot be edited in Time Slice mode, but it does apply the
+	# write, and the wave needs it: without it the CHOP stays at 1 sample instead of the
+	# 2.083 that 125 Hz implies at 60 fps, which also leaves limit1 with a single
+	# sample, and Normalize cannot scale one sample so it outputs 0.
 	scriptOp.numSamples = len(cols[0])
 	for name, vals in zip(CHANS, cols):
 		c = scriptOp.appendChan(name)

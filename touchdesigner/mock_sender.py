@@ -33,6 +33,14 @@ FS = 125
 BATCH = 16                     # samples per message, 128 ms
 HOP_S = BATCH / FS
 
+# Filtered units per microvolt, so the synthetic trace sits at the scale TouchDesigner
+# really receives. The app high-passes the raw counts and scales them by 2/4096
+# (yScale in src/components/filters.tsx), and one ADC count is about 0.548 uV
+# (UV_PER_COUNT in src/lib/dual-alpha/signalChain.ts). One microvolt is about 0.00089:
+# a 30-100 uV peak-to-peak occipital signal arrives as roughly +-0.013 to +-0.045,
+# nowhere near +-1, which is full scale.
+UV = (2.0 / 4096) / ((3.3 / 4095 / 1470) * 1e6)
+
 
 # ------------------------------------------------------------------ transport
 
@@ -171,20 +179,47 @@ def scenario(t):
 
 
 class Wave:
-    """A plausible filtered EEG trace at 125 Hz, in the app's scale (about +-1): 10 Hz
-    alpha whose amplitude follows the level, plus slower activity and noise."""
+    """A plausible filtered occipital EEG trace at 125 Hz, in the app's own scale.
+
+    Everything here is built in microvolts and scaled by UV at the end, so the numbers
+    match what the real page sends rather than being a near-full-scale sine. Three parts:
+
+      - a 1/f-ish background (two cascaded one-pole lows on white noise), strongest below
+        about 7 Hz, roughly 15 uV peak to peak: the resting EEG the alpha sits on;
+      - an alpha burst at `f_alpha` whose amplitude follows `level` (about 6 uV at level 0,
+        about 30 uV at level 1), slowly modulated so it comes and goes in spindles rather
+        than running as a steady tone, with a little frequency jitter;
+      - a couple of microvolts of faster beta/EMG activity.
+
+    An electrode that is off is not EEG at all: it drifts and picks up hum, about ten times
+    the amplitude of real signal. It stays bounded rather than railing, so the trace
+    saturates visibly instead of swamping everything downstream.
+    """
     def __init__(self, seed, f_alpha):
         self.r = random.Random(seed)
         self.f = f_alpha
-        self.lp = 0.0
+        self.p1 = 0.0          # one-pole lows, cascaded for a 1/f-ish background
+        self.p2 = 0.0
+        self.env = 0.0         # slow alpha envelope, so bursts ramp instead of switching
+        self.phase = 0.0
 
     def sample(self, k, level, ok):
         t = k / FS
-        if not ok:                                    # electrode off: railing-ish noise
-            return round(self.r.uniform(-1.5, 1.5), 4)
-        self.lp += 0.05 * (self.r.gauss(0, 1) - self.lp)
-        a = (0.15 + 0.6 * level) * math.sin(2 * math.pi * self.f * t)
-        return round(a + 0.25 * self.lp * 4 + 0.08 * self.r.gauss(0, 1) + 0.1 * math.sin(2 * math.pi * 1.3 * t), 4)
+        if not ok:
+            self.p1 += 0.02 * (self.r.gauss(0, 1) - self.p1)        # slow drift
+            drift_uv = self.p1 * 1200.0
+            hum_uv = 40.0 * math.sin(2 * math.pi * 60.0 * t)        # residual mains
+            return round((drift_uv + hum_uv) * UV, 5)
+        self.p1 += 0.25 * (self.r.gauss(0, 1) - self.p1)
+        self.p2 += 0.12 * (self.p1 - self.p2)
+        background_uv = self.p2 * 26.0
+        target = 6.0 + 24.0 * level
+        self.env += 0.01 * (target - self.env)
+        self.phase += 2 * math.pi * (self.f + 0.15 * self.p1) / FS
+        spindle = 0.7 + 0.3 * math.sin(2 * math.pi * 0.17 * t)
+        alpha_uv = self.env * spindle * math.sin(self.phase)
+        beta_uv = 2.0 * self.r.gauss(0, 1)
+        return round((background_uv + alpha_uv + beta_uv) * UV, 5)
 
 
 def synthetic(loop):

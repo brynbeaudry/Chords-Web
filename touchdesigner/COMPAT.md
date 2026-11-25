@@ -71,3 +71,5 @@ Set `TOEEXPAND` / `TOECOLLAPSE` to the tools' paths if they are not in the defau
 | TD on another machine | add `--host <PC address> --port 9000` (open port 9000 in the Windows firewall) |
 
 `mock_sender.py` needs Python 3 only. It uses the `websockets` package if installed, else its own RFC 6455 client (`--stdlib` forces that).
+
+**Use `--stdlib` for long or looping runs against TouchDesigner.** The `websockets` package sends keepalive pings; the Web Server DAT does not answer them, so the sender hangs up with `keepalive ping timeout` after a few minutes. The built-in client does not ping and runs indefinitely.

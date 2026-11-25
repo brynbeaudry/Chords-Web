@@ -1,5 +1,6 @@
 ?
 lag1 0 2
 lag2 0 2
+snap 0 off
 timeslice 0 on
 ?

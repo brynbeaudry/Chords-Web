@@ -1,8 +1,6 @@
 ?
 label 0 "Relative alpha sync (min pair_level)"
-value0 0 0
 value1 0 0.5
-valuerange0h 0 1
 w 0 100
 h 0 20
 top 0 ./back

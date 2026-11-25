@@ -1,5 +1,4 @@
 ?
-play 0 0
 rate 17 60 cookRate()
 end 0 1500
 rangeend 0 1500

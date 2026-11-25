@@ -142,6 +142,8 @@ With Chords-Web open and TouchDesigner running:
   ```
   It plays a 60 s scripted two-person scenario (one person in, then both, a short drop, a lost signal, one bad message). Add `--host <address> --port 9000` for a TouchDesigner on another computer. Close the Chrome tab first: only one sender at a time.
 
+  **Add `--stdlib` for anything left running.** Without it the sender uses the `websockets` package, which pings the socket and hangs up with `keepalive ping timeout` when TouchDesigner's Web Server DAT does not answer — a loop left running for a few minutes dies on its own. `--stdlib` uses the sender's own client, which does not ping; a 100 s loop ran clean. On Windows the command is `python`, not `python3`.
+
 **In the scripted scenario you should see**, in each 60 s loop: from about 5 s the right head turns forward and reaches toward the left and back; at about 15 s both heads turn to face each other; about 3 s later the transition plays; at about 38 s the right object goes grey and its head turns away; at 47 s **CONTRACT ERROR** flashes once.
 
 ---
@@ -173,6 +175,23 @@ With Chords-Web open and TouchDesigner running:
 **Optional one-minute check of the wiring** (the "shorted-input test"): clip one channel's active electrode to the reference electrode. That channel's trace should go almost flat. If it does not, the reference is not where we think it is.
 
 **A quick eyes test per person.** Ask them to close their eyes for 10 s, then open them for 10 s. With eyes closed the chips should show `α` and the person's band in the detector lane should light; with eyes open it should clear within about 2 s. Press **C** when they close their eyes and **O** when they open them: the lane marks the blocks so you can see the detector against what really happened. **X** clears the mark.
+
+### Calibrate: the guided 20 second check
+
+**Press Calibrate** in the toolbar once both people are wired and their chips are showing readings. A panel appears with the script to read out, the half that is running, and a countdown.
+
+1. Both sit still and comfortable, facing forward.
+2. **Eyes closed** and relaxed for 10 s — no talking, no frowning.
+3. **Eyes open** for 10 s, looking softly ahead without staring.
+4. It finishes on its own at 20 s. **Calibration done** ends it sooner and keeps what was measured; **Start over** restarts from eyes-closed; **Cancel** leaves without changing anything.
+
+This sets each person's own **alpha ceiling** from their eyes-closed reading, so `level` reaches 1.0 at what is strong *for them* rather than at a fixed 12 dB. Weak-alpha people are the ones it helps most: without it they may never push the visuals past the middle of their range.
+
+**Press Calibrate again for every new pair.** It always re-enters the check and discards the previous pair's numbers, so people moving through the piece each get their own ceilings.
+
+**Read the panel before you confirm.** Each person shows `closed N · open N`, the number of readings taken in each half. A person sitting at `closed 0 · open 0` is **not streaming** — their headset is the problem, not their alpha. Confirming anyway leaves that person uncalibrated on the 12 dB default, which is safe but means the check did nothing for them. A person needs at least 5 readings in each half to be trusted.
+
+**Skipping it is allowed.** Both people simply stay `uncalibrated` and run on the 12 dB default, exactly as before this step existed.
 
 ---
 

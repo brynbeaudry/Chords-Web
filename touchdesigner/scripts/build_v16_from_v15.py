@@ -42,12 +42,26 @@ def toc_add(rel, after_prefix):
     toc.insert(idx + 1, rel)
 
 
+def write_text(path, s):
+    """Write a TD text file with LF endings on every platform.
+
+    toecollapse reads the .toc and the node files byte for byte: on Windows a plain
+    open(path, 'w') writes CRLF, toecollapse then looks for '.build\\r', finds nothing,
+    and silently produces a 0-byte .toe. Keeping LF also makes a Windows rebuild
+    byte-identical to the Mac-built file.
+    """
+    with open(path, 'w', newline='\n') as f:
+        f.write(s)
+
+
 def write(rel, data, after_prefix):
     path = p(rel)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    mode = 'wb' if isinstance(data, bytes) else 'w'
-    with open(path, mode) as f:
-        f.write(data)
+    if isinstance(data, bytes):
+        with open(path, 'wb') as f:
+            f.write(data)
+    else:
+        write_text(path, data)
     toc_add(rel, after_prefix)
 
 
@@ -110,7 +124,7 @@ def set_inputs(net, name, inputs):
     block = 'inputs\n{\n' + ''.join('%d \t%s\n' % (i, n) for i, n in enumerate(inputs)) + '}\n'
     s2, k = re.subn(r'inputs\n\{\n.*?\}\n', block, s, flags=re.S)
     assert k == 1, path
-    open(path, 'w').write(s2)
+    write_text(path, s2)
 
 
 def set_parm(net, name, line):
@@ -125,7 +139,7 @@ def set_parm(net, name, line):
     else:
         last = max(i for i, l in enumerate(lines) if l == '?')
         lines.insert(last, line)
-    open(path, 'w').write('\n'.join(lines))
+    write_text(path, '\n'.join(lines))
 
 
 def set_text(net, name, text):
@@ -149,19 +163,19 @@ def copy_comp(net, src, dst, parm_edit, panel_edit, tile=None):
         path = p('%s/%s.n' % (net, dst))
         s = open(path).read()
         s = re.sub(r'^tile (-?\d+) (-?\d+) ', 'tile %d %d ' % tile, s, flags=re.M)
-        open(path, 'w').write(s)
+        write_text(path, s)
     path = p('%s/%s.parm' % (net, dst))
     s = open(path).read()
     for a, b in parm_edit:
         assert a in s, (a, path)
         s = s.replace(a, b)
-    open(path, 'w').write(s)
+    write_text(path, s)
     path = p('%s/%s.panel' % (net, dst))
     s = open(path).read()
     for a, b in panel_edit:
         assert a in s, (a, path)
         s = s.replace(a, b)
-    open(path, 'w').write(s)
+    write_text(path, s)
 
 
 FRESH = "absTime.seconds - float(op('eeg_meta')['last_msg']) < 2"
@@ -223,6 +237,72 @@ for i, (a, b) in enumerate((('chan1', 'chan4'), ('chan2', 'chan5'), ('chan3', 'c
 add_op(WS, 'wave_slots', 'CHOP:merge', (1600, -700, 130, 90),
        inputs=['wave_slot1', 'wave_slot2', 'wave_slot3'])
 set_inputs(WS, 'null1', ['wave_slots'])
+
+# The two waveform lines (geo1 on one side, geo5 on the other) drew straight vertical
+# streaks instead of a wave. They are fed by WS/select1 (chan1, person 1) and WS/select2
+# (chan4, person 2) -> filter2 / filter1 -> trail3 / trail2 -> chopto1 ('ty chan1') /
+# chopto2 ('tx chan4'), so the channel value is the point's position along the line: a
+# signal near zero puts every point at the same place and the line comes out straight.
+#
+# The signal really is near zero at this scale. The page high-passes the ADC counts and
+# scales them by 2/4096 (yScale, src/components/filters.tsx) and a count is about 0.548 uV
+# (UV_PER_COUNT, src/lib/dual-alpha/signalChain.ts), so a 30-100 uV peak-to-peak occipital
+# signal arrives as about +-0.013 to +-0.045. It needs a gain before it can read as a wave.
+#
+# Take the two lines off their own gained copy rather than touching limit1. limit1 feeds
+# out2_limit, and seven V15 consumers hang off that: SpositionR / SpositionL (object
+# heights) and five noise parameters that set the background look (Noise10exponent,
+# Noise2HarmonicGain, Noise10period, BNoise2period, NOise2exponent). Changing limit1
+# changes all of them, which washed the background out. So limit1 keeps V15's Normalize
+# exactly, and the lines get wave_gain -> trail_wave instead. This also avoids reading
+# channels out of trail1, whose four inputs carry colliding channel names.
+#
+# Tune the trace with wave_gain's gain. It affects nothing else.
+add_op(WS, 'wave_gain', 'CHOP:math', (2650, 175, 130, 90), inputs=['null1'], parms=['gain 0 20'])
+add_op(WS, 'trail_wave', 'CHOP:trail', (2800, 400, 130, 90), inputs=['wave_gain'],
+       parms=['timeslice 0 on'])
+set_inputs(WS, 'select1', ['trail_wave'])
+set_inputs(WS, 'select2', ['trail_wave'])
+
+# How much history the two lines show. V15 left trail2 and trail3 on Grow Length, which per
+# the Trail CHOP help "will keep getting longer as the timeline moves forward" - an unbounded
+# recording, so the lines accumulated the whole session. Hold a fixed 10 s window instead.
+for t in ('trail2', 'trail3'):
+    set_parm(WS, t, 'growlength 0 off')
+    set_parm(WS, t, 'wlength 0 10')
+    set_parm(WS, t, 'wlengthunit 0 seconds')
+
+# Line thickness. SY/geo1 and SY/geo5 are the two line geometries: geo1.network wires its
+# in1 to SY/null17 (<- WS/out1 <- chopto1) and geo5.network to SY/null18 (<- WS/out2), and
+# SY/render6 renders "geo1, geo5" into comp5. Neither had a material, so both drew one pixel
+# wide.
+#
+# A Wireframe MAT was tried first and its `linewidth` made no visible difference at 3, 10 or
+# 28: that parameter sets the GL line width, which current drivers commonly clamp to 1 pixel.
+# The Line MAT is the operator built for this - with `drawlines` on it emits real polygons for
+# each segment, so the width is geometry and is not clamped. Width is resolution independent:
+# per the Line MAT help, a width of 1 draws a line 1/1000 of the image width, so at render6's
+# 1280 a width of 6 is about 7.5 pixels.
+#
+# The depth model matters more than the width. With the default inversedistance model the
+# width is divided by the camera distance, so 4, 8 and even 40 all drew the same thin line.
+# scurve holds widthnear up to Distance Near and widthfar beyond Distance Far, so with the
+# two set equal the width is constant at every distance; the far colour is left off so the near
+# colour holds all the way back, and the lines stay white.
+add_op(SY, 'waveline', 'MAT:line', (2557, 1700, 130, 90), parms=[
+    'drawlines 0 on',
+    'drawpoints 0 off',
+    'depthinterpolationmodel 0 scurve',
+    'widthnear 0 6',
+    'widthfar 0 6',
+    'specifylinefarcolor 0 off',
+    'linenearcolorr 0 1', 'linenearcolorg 0 1', 'linenearcolorb 0 1',
+    'linenearalpha 0 1'])
+# render6 carries a Material Override (it was pbr5), and a Render TOP's override replaces
+# the material on every geometry it renders - so setting `material` on geo1 and geo5 had no
+# effect at all, at any width. render6 renders only geo1 and geo5, so the override itself is
+# pointed at waveline and geo1/geo5 are left exactly as V15.
+set_parm(SY, 'render6', 'overridemat 0 waveline')
 
 # Audio Spectrum on a real 125 Hz series: FFT 128 = 1.02 s window (V15: 64 at ~60/s, ~1 s)
 set_parm(WS, 'audiospect1_FreqCalc', 'fftsize 0 128')
@@ -310,8 +390,8 @@ write(CT + '/status_label.panel', open(p(CT + '/BNoise2period1/text.panel')).rea
 # the controls container's saved panel state named the removed slider
 s = open(p('controls.panel')).read()
 s = s.replace('radio sSync_Trigger\n', 'radio sHold_time\n').replace('children 9\n', 'children 12\n')
-open(p('controls.panel'), 'w').write(s)
+write_text(p('controls.panel'), s)
 
-with open(TOC, 'w') as f:
+with open(TOC, 'w', newline='\n') as f:
     f.write(''.join(l + '\n' for l in toc))
 print('built', D, len(toc), 'toc entries')

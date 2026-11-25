@@ -1,0 +1,16 @@
+1
+{
+   rate = 125
+   start = 0
+   tracklength = 1
+   tracks = 2
+   {
+      name = d1_w
+      data_rle = 0.01011 
+   }
+   {
+      name = d2_w
+      data_rle = 0.01122 
+   }
+
+}

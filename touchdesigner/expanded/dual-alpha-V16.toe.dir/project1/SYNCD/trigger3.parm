@@ -8,5 +8,4 @@ peaklen 0 10
 decay 0 3
 sustain 0 0
 timeslice 0 on
-threshold 0 on
 ?

@@ -1,0 +1,40 @@
+1
+{
+   rate = 60
+   start = 0
+   tracklength = 1
+   tracks = 8
+   {
+      name = together
+      data_rle = 1 
+   }
+   {
+      name = held
+      data_rle = 1 
+   }
+   {
+      name = hold_s
+      data_rle = 7.56667 
+   }
+   {
+      name = gap_s
+      data_rle = 0.716667 
+   }
+   {
+      name = forced
+      data_rle = 0 
+   }
+   {
+      name = hold_time
+      data_rle = 3 
+   }
+   {
+      name = rel_sync
+      data_rle = 0 
+   }
+   {
+      name = forgiveness
+      data_rle = 1 
+   }
+
+}

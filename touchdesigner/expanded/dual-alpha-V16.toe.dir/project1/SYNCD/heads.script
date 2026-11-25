@@ -1,0 +1,60 @@
+1
+{
+   rate = 60
+   start = 0
+   tracklength = 1
+   tracks = 13
+   {
+      name = R_ry
+      data_rle = -20.4916 
+   }
+   {
+      name = L_ry
+      data_rle = 20 
+   }
+   {
+      name = d1_angle
+      data_rle = -20.4916 
+   }
+   {
+      name = d2_angle
+      data_rle = -20 
+   }
+   {
+      name = d1_sat
+      data_rle = 0.999873 
+   }
+   {
+      name = d2_sat
+      data_rle = 0.999873 
+   }
+   {
+      name = d1_calm
+      data_rle = 0.794988 
+   }
+   {
+      name = d2_calm
+      data_rle = 0.829401 
+   }
+   {
+      name = d1_colormult
+      data_rle = 1.02458 
+   }
+   {
+      name = d2_colormult
+      data_rle = 1 
+   }
+   {
+      name = d1_t
+      data_rle = 0 
+   }
+   {
+      name = d2_t
+      data_rle = 0 
+   }
+   {
+      name = E
+      data_rle = 1 
+   }
+
+}

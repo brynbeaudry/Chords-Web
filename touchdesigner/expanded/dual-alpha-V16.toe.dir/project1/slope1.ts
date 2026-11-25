@@ -1,31 +1,31 @@
 65538
 1
-447
-447
+76
+75
 0
 0
 1
 1
 0
-447
-447
+76
+76
 0
 60
 chan0
-1.16796e+06
+302177
 0
 0
-1.16785e+06
+302175
 0
 0
 {
    rate = 60
-   start = 447
+   start = 76
    tracklength = 1
    tracks = 1
    {
       name = chan0
-      data_rle = 6600 
+      data_rle = 125.625 
    }
 
 }
