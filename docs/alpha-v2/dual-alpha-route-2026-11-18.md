@@ -905,7 +905,7 @@ One pull request into `dual-alpha` per row. `dual-alpha` merges to `main` only a
 
 **From P6 on, it runs for every person at the start of a session:** 10 s eyes closed, then 10 s eyes open. It gives ground truth (C16), the person's alpha range for `level`, and their peak frequency. A session without it still runs on defaults, and the chip says "uncalibrated".
 
-**At the Nov 26 rehearsal and the Nov 27 show the guided step does not exist yet** (P6 is after the show). The operator times the 20 s by hand and marks the blocks with two keys, so the lane and the recording carry the ground truth, but the levels stay at the defaults (5 and 2 dB, ceiling 12 dB) and every person shows as uncalibrated. If the rehearsal shows weak-alpha people are rarely flagged, P6 is the first thing to bring forward: it is 2–3 agent hours.
+**P6 was brought forward and now exists** (`src/lib/dual-alpha/calibration.ts` and the Calibrate button on `/dual-alpha`): the guided 20 s check sets each person's ceiling, and the button re-enters the check for each new pair. It has not yet been run on a person. Skipping it still falls back to the 12 dB default, and the hand marks below remain the ground truth for the recording. The operator times the 20 s by hand and marks the blocks with two keys, so the lane and the recording carry the ground truth, but the levels stay at the defaults (5 and 2 dB, ceiling 12 dB) and every person shows as uncalibrated. If the rehearsal shows weak-alpha people are rarely flagged, P6 is the first thing to bring forward: it is 2–3 agent hours.
 
 ### 9.3 What the piece may say
 
