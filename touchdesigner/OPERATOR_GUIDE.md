@@ -196,6 +196,13 @@ This sets each person's own **alpha ceiling** from their eyes-closed reading, so
 ---
 
 
+
+**When a duo finishes and you are waiting for new people**, the piece does this on its own,
+measured: after about **2 seconds** without data the two objects grey out, and after about
+**6 seconds** the image switches to the **second scene**. That is the waiting state — the
+background does not grey, it changes scene. Start the next pair and it returns to the first
+scene within 2 seconds, with the colour easing back over about a second. Nothing to press.
+
 ### Things that have bitten us on this machine
 
 - **Chrome is not installed; Edge is what is actually used.** Edge is Chromium, so Web Bluetooth

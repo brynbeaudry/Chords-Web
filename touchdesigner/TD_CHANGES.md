@@ -164,7 +164,7 @@ So anything that wants a different amplitude takes its own copy off `null1`, as 
 
 *(`SY/math1` and `SY/math2` are **not** on this path despite their names: they read `SY/limit1` ← `analyze1` ← `noise4`, an internal Noise CHOP with nothing to do with the headsets.)*
 
-**Still open: object height barely moves.** `select9` / `select10` go through a **3 s** Filter, and a 3 s average of a zero-mean wave nearly cancels. Measured against the synthetic stream, V15's Normalize left this path at **mean 0.499 with a range of 0.008**, identical for a resting and a strongly-alpha person — so it never tracked alpha in V15 either. Giving it real travel means either an envelope (a Function CHOP `abs` before the Filter, so it follows amplitude rather than averaging to zero) or a shorter Filter width. Both change the look, so they are a decision for the T6 check, not an inference.
+**Object height is waveform-driven, not alpha-driven — and that is the design.** `select9` / `select10` go through a 3 s Filter, and `limit1`'s Normalize erases amplitude, so the height cannot carry alpha. Measured on the running file: `SpositionR` spread 4.85 against `d1_level` 0–0.70 at correlation −0.14. The object's alpha response is `calm` instead — *"their object slows and steadies as the value rises"* — and that is wired and working: `d1_calm` 0.510–1.000 into `math22`'s gain 2.376–4.660 at correlation −0.961. An earlier version of this note called it a defect and quoted a range of 0.008; that figure was a simulation of V15, not a measurement.
 
 What each former channel reads now. Every consumer keeps its V15 Filter width and Math mapping; only the source changed.
 
@@ -348,8 +348,8 @@ stops the show; each entry says what it costs and what the fix would be.
 
 | Item | What it costs | The fix |
 |---|---|---|
-| **Object height barely tracks alpha.** `select9` / `select10` pass through a **3 s** Filter. Measured on the synthetic stream, V15's Normalize left this path at mean 0.499 with a range of 0.008 — *identically* for a resting and a strongly-alpha person | The objects move, but their height is not really reporting alpha. It never did in V15 either | An envelope before the Filter (a Function CHOP `abs`, so it follows amplitude rather than averaging a zero-mean wave to nothing) or a shorter Filter width. Both change the look, so it is a decision to make while watching |
-| **The background takes about two minutes to reach full colour.** `container5/speed1` is a Speed CHOP — an integrator — fed by `constant1` = `op('null3')['chan1']*1.5`, starting from `resetvalue` **0.85** and driving `noise1` | The look *travels* to its good state rather than starting there, so an opening looks washed out for the first minute or two | `resetvalue` is the knob. Let it run until the background looks right, read `container5/speed1`'s output, and set `resetvalue` to that number; every open then starts there |
+| **Object height does not track alpha — by design.** Measured live over a scenario loop: `SpositionR` spread **4.85** (−5.94 to −1.08) against `d1_level` 0–0.70, correlation **−0.14**. The height follows the waveform, and `limit1`'s Normalize erases amplitude, so it cannot carry alpha | Nothing. The plan puts the object's alpha response elsewhere: *"their object slows and steadies as the value rises"* — that is `calm`, and it works. Measured `d1_calm` 0.510–1.000 (exactly 1 − 0.7 × level) reaching `math22`'s gain 2.376–4.660 at correlation **−0.961** | None needed. An earlier note here claimed a range of 0.008; that was a simulation of V15, not a measurement of this file |
+| **The background was slow to reach full colour.** `container5/speed1` is an integrator from `resetvalue` **0.85**, and it drives `noise1.ty` — a noise *offset* | Probably already fixed, and not by this. Offsetting noise changes the pattern, it does not brighten it; the pale opening was far more likely the dead `transform4.ty` colour scroll ([the audit section](#found-by-auditing-the-running-file)), which is now live | Re-watch an opening before changing anything. If it is still slow, `resetvalue` is the knob: read `container5/speed1` once the look is right and set `resetvalue` to that |
 | **Both waveform lines are driven on Y.** `chopto1` and `chopto2` both write `P(1)`; the consumer table below says `chopto2` is `tx chan4` | None observed — the two geos are transformed differently (`geo5` has `ry 180`), so they read as a mirrored pair | If one line should sweep horizontally, set `chopto2`'s `attscope` to `P(0)`. Worth deciding by eye rather than by the table |
 
 ### Plumbing
@@ -361,6 +361,32 @@ stops the show; each entry says what it costs and what the fix would be.
 | **The `.toe` is no longer reproducible from `scripts/build_v16_from_v15.py`** | The script's claim to regenerate the file is stale; `expanded/` and the `.toe` are the record | Either fold the TouchDesigner-side edits back into the script, or retire the script and treat `expanded/` as the source |
 | **Vestigial operators**: `SY/select7` (no inputs, no channels), `SY/math21` (computes 0.515 that nothing reads), `SY/select1` (asked for `chan26`/`chan51`/`chan76` from V15's 25-slot layout, resolves only `chan1`) | Nothing — none reaches the image | Delete, if tidiness is worth a rebuild |
 | **Five V15 references still unresolved** (down from seven), including `/project1/switch2.par.index` → `timer1['done']` | None observed; the scene switch was verified working ([item 12](#confirm-on-first-open)) | Leave. They are Kaz's, they predate V16, and the one that mattered is fixed |
+
+
+### Verified: what a flat signal does
+
+Measured by stopping the sender on the running file. **The background does not go grey — the
+piece changes scene.** This is V15's behaviour, preserved by A4:
+
+| Time since the stream stopped | What happens |
+|---|---|
+| ~2 s | `STATE` `stale` goes to 1, both people become not ok, and the objects grey out over about a second (`d1_sat` 0.998 → 0.155 → 0) — this part is V16's [B5](#b-the-pair-and-the-heads-sy) |
+| ~6 s | `timer1` `done` goes to 1 and `switch2` flips to index 1: the image becomes `container5`, the second scene. That *is* the "waiting for new people" state |
+| data resumes | within 2 s `switch2` is back to index 0, `stale` 0, and `d1_sat` eases back to 1 |
+
+So an operator seeing a vibrant background several seconds after the stream stops is looking at
+scene 2, not at scene 1 failing to grey.
+
+**One consequence of fixing `transform4` to review.** [B7](#b-the-pair-and-the-heads-sy) said the
+whole-image colour shift through `transform4` → `lookup2` was broken in V15 and that fixing it
+"is a separate question for Kaz". It is now fixed, because the expression simply named an
+operator that had been renamed. That means **the whole-image colour shift is live for the first
+time** — worth Kaz's eye, and a one-line revert if it is not wanted.
+
+**Unused `heads` channels.** Only 6 of 13 are consumed (`R_ry`, `L_ry`, `d1_sat`, `d2_sat`,
+`d1_calm`, `d2_calm`). `d1_colormult` / `d2_colormult` are unwired deliberately per
+[B7](#b-the-pair-and-the-heads-sy), which needs a look decision and a material split before it
+can be connected. `d1_angle`, `d2_angle`, `d1_t`, `d2_t` and `E` are diagnostic.
 
 ### Not covered by any test we have
 
