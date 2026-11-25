@@ -41,6 +41,7 @@ The file names its pair inside: `/project1/SYNCD/container1websocket_example/com
 | `TD_CHANGES.md` | every change V15 → V16, with checks and the "confirm on first open" list |
 | `ASSETS.md` | the models and media the file loads, which are not in the repo |
 | `scripts/` | expand, collapse, build, verify and test tools (below) |
+| `scripts/make_debug_build.py` | builds a local-only copy with a Python query endpoint, for inspecting the file while it runs ([below](#inspecting-the-file-while-it-runs)). Never used for a show |
 
 **The `.py` files are the source of truth.** `scripts/verify_toe.py` fails if the Python inside the `.toe` differs from them.
 
@@ -61,6 +62,49 @@ The file names its pair inside: `/project1/SYNCD/container1websocket_example/com
 Set `TOEEXPAND` / `TOECOLLAPSE` to the tools' paths if they are not in the default install location. `toeexpand` exits with status 1 even when it succeeds; the scripts judge success by its output. `toecollapse` packs only what the `.toc` lists, so a file added to `expanded/` needs a `.toc` line.
 
 **After editing in TouchDesigner**, save, run `scripts/td-expand.sh`, and commit the `.toe` and `expanded/` together. If the Python in a DAT changed, copy it back to its `.py` file so `verify_toe.py` stays green.
+
+## Inspecting the file while it runs
+
+Most of what goes wrong here is invisible in the expanded text: a parameter being ignored, a
+CHOP quietly emitting one sample instead of two, an expression naming an operator that was
+renamed. `scripts/make_debug_build.py` takes `expanded/` and adds a query endpoint, so those
+questions take one request instead of a rebuild-and-look cycle.
+
+| Task | Command (from `touchdesigner/`) |
+|---|---|
+| build it | `python3 scripts/make_debug_build.py /tmp/dbg` |
+| collapse it | `cd /tmp/dbg && toecollapse dual-alpha-V16.toe.dir` |
+| stage it | copy the result into the `TD/` folder as `dual-alpha-V16-debug.toe` |
+| query it | `curl -s --get --data-urlencode "q=<python>" http://127.0.0.1:9980/` |
+
+A handy shell helper:
+
+```sh
+q() { curl -s --get --data-urlencode "q=$1" http://127.0.0.1:9980/ ; echo; }
+
+q "op('/project1/SYNCD/heads')['R_ry'].eval()"                 # read a channel
+q "op('/project1/SYNCD/heads').cookFrame"                      # is it cooking?
+q "op('/project1/SYNCD/waveline').par.widthfar.eval()"         # read a parameter
+q "op('/project1/SYNCD/waveline').par.widthfar = 5"            # set one, live
+q "[(o.path, o.warnings()) for o in op('/project1').findChildren(maxDepth=8) if o.warnings()]"
+```
+
+An expression is evaluated and its `repr` returned; a statement is exec'd and returns `OK`;
+anything else returns the traceback.
+
+Two traps worth knowing. `findChildren(depth=N)` matches **exactly** depth N — use `maxDepth`,
+or an empty list will look like a clean file. And parameter changes made this way are live only:
+bake anything worth keeping into `expanded/` and re-collapse, or it dies with the process.
+
+**This is not a show file.** The endpoint executes arbitrary Python that is sent to it. It is
+bound to `127.0.0.1` through the Web Server DAT's `localaddress` parameter, which matters: left
+blank, a Web Server DAT listens on *every* interface, which on a venue network is remote code
+execution. Verified bound — loopback answers, and the machine's own LAN address refuses.
+
+- Never use a debug build for a show, or leave one running unattended.
+- Never copy it over `dual-alpha-V16.toe`.
+- The show file is the one with no `dbg_*` operators: `grep -c dbg_webserver expanded/*.toc`
+  is 0, and nothing listens on 9980 while it runs.
 
 ## Sending test data
 
