@@ -7,7 +7,7 @@ liftscale 0 1
 linenearcolorr 0 1
 linenearcolorg 0 1
 linenearcolorb 0 1
-linenearalpha 0 0.8
+linenearalpha 0 1
 specifylinefarcolor 0 off
 roundwidth 0 0.97
 ?

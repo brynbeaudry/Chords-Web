@@ -258,6 +258,46 @@ Per side, in degrees; positive is turned away, 0 forward, negative toward the ot
 
 ---
 
+## Found by auditing the running file
+
+Queried live over a temporary Web Server DAT, with `mock_sender.py` driving the piece. 544
+operators in `/project1`, **zero errors**, and **61.5 fps against a 60 target** — there is no
+performance problem and no operator starved of values. Five warnings; three were real and are
+fixed, two remain open.
+
+**Fixed.**
+
+| What | Why it mattered |
+|---|---|
+| `SY/transform4` `ty` referenced `both_facecolor_speed`, which does not exist — the operator is `both_facecolor_speed2` and carries `chan5`, not `chan1` | The expression threw on every evaluation while `errors()` stayed empty, so the colour lookup it feeds (`transform4` → `lookup2` → `matte1`) never scrolled. Driven by `speed3` ← `math20`, so this is an EEG-responsive colour animation that was dead in V15 and is now live (`ty` advancing ~0.8 a second). One of the seven pre-existing V15 broken references; six remain |
+| `WS/chopto1` / `WS/chopto2` had attribute names in `chanscope` | TD looked for channels called `ty` and `tx`, warned `Channel not found` once per cook, and landed `chan1` / `chan4` on `P(1)` by position. Now explicit (`chanscope` the channel, `attscope` `P(1)`). Geometry is unchanged: point x measured −1.0 and −0.0392 before and after. Note this means **both** lines are driven on Y, not one on X as the consumer table says |
+| `SY/waveline` alpha 0.8 with blending disabled | TD warns and ignores the alpha, so the lines were already opaque. Set to 1, which is what was being drawn. Enabling blending instead would make them translucent — a look change, so not done |
+
+**Open: a cook dependency loop on `SY/heads` and `SY/pair_logic`.** The stack is
+`render5` → `geo4` → `transform8` → `ScolorSpeedR` → `math22` (Multiply, which reads
+`op('heads')`) → `heads` → `heads`. Both Script CHOPs call `store()` on themselves each cook,
+which dirties them while an expression is pulling them mid-render.
+
+- It costs nothing measurable: 61.5 fps, cook times under 0.05 ms, and the values are correct
+  and moving.
+- [Item 6](#confirm-on-first-open)'s remedy does **not** fix it. Disabling `onGetCookLevel` on
+  both was tried on the running file: the loop persisted and the CHOPs kept cooking
+  (`cookFrame` 693 → 825), so `CookLevel.ALWAYS` is not the cause.
+- The real fix is to hold the callbacks' state in a module-level dict instead of OP storage,
+  which would also stop a TD save embedding stale state ([item 13](#confirm-on-first-open), the
+  one that latched `hold_s` at 7.57 s). That is a change to show-critical callbacks and is
+  deliberately **not** done before the show.
+
+**Vestigial, left alone:** `SY/select7` has no inputs and no channels; `SY/math21` computes a
+value (0.515) that nothing reads; `SY/select1` asked for `chan26` / `chan51` / `chan76` from
+V15's 25-slot layout and now resolves only `chan1`. None of the three affects the image.
+
+**Confirmed working, against the checker's doubt:** `SY/transform5` `tx` reads
+`op('null3')['chan1']*0.01` and evaluates to −0.041 — `verify_toe.py` lists it as "channels
+unknown", which is a limitation of the checker, not a break.
+
+---
+
 ## Confirm on first open
 
 Everything here was inferred without running TouchDesigner. Each line says what to look at.

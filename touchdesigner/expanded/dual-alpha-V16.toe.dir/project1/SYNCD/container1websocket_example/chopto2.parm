@@ -1,4 +1,5 @@
 ?
 chop 0 trail2
-chanscope 32 "tx chan4"
+chanscope 32 chan4
+attscope 0 "P(1)"
 ?
