@@ -195,6 +195,25 @@ This sets each person's own **alpha ceiling** from their eyes-closed reading, so
 
 ---
 
+
+### Things that have bitten us on this machine
+
+- **Chrome is not installed; Edge is what is actually used.** Edge is Chromium, so Web Bluetooth
+  works and the table above allows it, but every instruction that says "Chrome" means Edge here.
+  Install Chrome before the show if you would rather follow the guide literally.
+- **TouchDesigner's incremental save is on.** Ctrl+S writes `dual-alpha-V16.1.toe` rather than
+  overwriting `dual-alpha-V16.toe`, so the file the repo tracks does not change and the next
+  save becomes `.2`. Turn the preference off, or save deliberately over the tracked name.
+- **A TouchDesigner save carries live state into the file.** It serialises OP storage, so a save
+  can embed a stale clock, `pair_logic`'s hold counter mid-count, and `wave`'s whole ring
+  buffer. After saving, clear it with `op('wave').unstore('*')` (and the same on `heads` and
+  `pair_logic`) or the next open starts mid-state.
+- **`dual-alpha-V16-debug.toe`, if you find one, is not the show file.** It carries a Web Server
+  DAT that executes arbitrary Python sent to it over HTTP. It exists for debugging on a desk.
+  Never run it for a show, and never copy it over `dual-alpha-V16.toe`.
+
+---
+
 ## 5. Show settings in TouchDesigner
 
 Set these on the `/controls` panel before the doors open:

@@ -339,6 +339,43 @@ V15 references that `verify_toe.py` reports as already broken in V15 (not touche
 
 ---
 
+## Open items, knowingly not fixed
+
+Everything here was found by running the piece and left alone on purpose. Nothing in this list
+stops the show; each entry says what it costs and what the fix would be.
+
+### Visual behaviour
+
+| Item | What it costs | The fix |
+|---|---|---|
+| **Object height barely tracks alpha.** `select9` / `select10` pass through a **3 s** Filter. Measured on the synthetic stream, V15's Normalize left this path at mean 0.499 with a range of 0.008 — *identically* for a resting and a strongly-alpha person | The objects move, but their height is not really reporting alpha. It never did in V15 either | An envelope before the Filter (a Function CHOP `abs`, so it follows amplitude rather than averaging a zero-mean wave to nothing) or a shorter Filter width. Both change the look, so it is a decision to make while watching |
+| **The background takes about two minutes to reach full colour.** `container5/speed1` is a Speed CHOP — an integrator — fed by `constant1` = `op('null3')['chan1']*1.5`, starting from `resetvalue` **0.85** and driving `noise1` | The look *travels* to its good state rather than starting there, so an opening looks washed out for the first minute or two | `resetvalue` is the knob. Let it run until the background looks right, read `container5/speed1`'s output, and set `resetvalue` to that number; every open then starts there |
+| **Both waveform lines are driven on Y.** `chopto1` and `chopto2` both write `P(1)`; the consumer table below says `chopto2` is `tx chan4` | None observed — the two geos are transformed differently (`geo5` has `ry 180`), so they read as a mirrored pair | If one line should sweep horizontally, set `chopto2`'s `attscope` to `P(0)`. Worth deciding by eye rather than by the table |
+
+### Plumbing
+
+| Item | What it costs | The fix |
+|---|---|---|
+| **Cook dependency loop on `SY/heads` and `SY/pair_logic`** — `math22`'s Multiply pulls `op('heads')` mid-render while both callbacks `store()` on themselves | Nothing measurable: 61.5 fps, cook times under 0.05 ms, values correct and moving. [Item 6](#confirm-on-first-open)'s remedy was tried live and does **not** fix it | Hold the callbacks' state in a module-level dict instead of OP storage. That also stops a TD save embedding stale state ([item 13](#confirm-on-first-open)) — the fault that latched `hold_s` at 7.57 s. Show-critical code, so after the show |
+| **`verify_toe.py` reports one phantom failure** on any TD-saved file: it looks for `contract_error`'s `const0` in the `.parm` text, and TD omits parameters sitting at their default | A green run now reads `FAILURES: 1` | Teach the checker to accept `const{i}name` as proof the parameter exists |
+| **The `.toe` is no longer reproducible from `scripts/build_v16_from_v15.py`** | The script's claim to regenerate the file is stale; `expanded/` and the `.toe` are the record | Either fold the TouchDesigner-side edits back into the script, or retire the script and treat `expanded/` as the source |
+| **Vestigial operators**: `SY/select7` (no inputs, no channels), `SY/math21` (computes 0.515 that nothing reads), `SY/select1` (asked for `chan26`/`chan51`/`chan76` from V15's 25-slot layout, resolves only `chan1`) | Nothing — none reaches the image | Delete, if tidiness is worth a rebuild |
+| **Five V15 references still unresolved** (down from seven), including `/project1/switch2.par.index` → `timer1['done']` | None observed; the scene switch was verified working ([item 12](#confirm-on-first-open)) | Leave. They are Kaz's, they predate V16, and the one that mattered is fixed |
+
+### Not covered by any test we have
+
+**`mock_sender.py` cannot exercise the detector or Bluetooth.** It sends contract v2 —
+`d1_level`, `d1_ok`, `pair_level`, `d1_w` — which are *post-detector* values. So everything
+from the headset through the signal chain, the per-electrode vote and the quality chips is
+untested by it. The failure where the chips sit on *"waiting for 2 s of signal"* and nothing is
+sent lives entirely in the part the mock bypasses, and no amount of mock testing will find it.
+The plan's gate stands: a real test on a PC with TouchDesigner **and** both headsets.
+
+**The 20 s check has never been run on a person.** The logic has tests; the human procedure
+does not.
+
+---
+
 ## Tuning constants
 
 All starting values from the plan, to be set by eye on the PC. They are module constants at the top of each callbacks DAT.
