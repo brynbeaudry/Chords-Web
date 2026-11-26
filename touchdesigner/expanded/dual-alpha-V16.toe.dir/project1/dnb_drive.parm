@@ -1,5 +1,5 @@
 ?
-inputgain 17 6.0 16.0*op('SYNCD/container1websocket_example/STATE')['d2_level']
+inputgain 17 4.0 12.0*op('dnb_ctl')['d2_level']*(1-op('dnb_ctl')['pair_level'])
 enablelimiter 0 on
 thresholdlimiter 0 -1
 timeslice 0 on

@@ -1230,6 +1230,10 @@ project1/container5_ExpStarTutorial_Supermarketsallad1/transform4.n
 project1/container5_ExpStarTutorial_Supermarketsallad1/transform4.parm
 project1/container5_ExpStarTutorial_Supermarketsallad1/wireframe1.n
 project1/container5_ExpStarTutorial_Supermarketsallad1/wireframe1.parm
+project1/dnb_state.n
+project1/dnb_state.parm
+project1/dnb_ctl.n
+project1/dnb_ctl.parm
 project1/dnb_kick.n
 project1/dnb_kick.parm
 project1/dnb_snare.n

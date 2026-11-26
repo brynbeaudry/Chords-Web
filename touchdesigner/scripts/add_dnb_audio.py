@@ -9,6 +9,12 @@ unloadable .toe: Audio Dynamics writes `audiodyna` and Audio Band EQ writes `aud
 
 The signal path, all in /project1, prefixed dnb_
 -----------------------------------------------
+    dnb_state -> dnb_ctl          Select CHOP (by path, because a wired input cannot
+                                  cross a container) into a Filter CHOP, 0.35 s.
+                                  Everything reads
+                                  this rather than STATE itself, so no level, speed,
+                                  cutoff or mute can step in a single frame.
+
 Five stems play in phase from touchdesigner/audio/ (copied next to the .toe, like the models),
 each at its own level, all sharing one speed:
 
@@ -44,11 +50,15 @@ The mapping
 -----------
 Person 1 is the right side, person 2 the left.
 
-    pair_level   speed (0.82 - 1.18x, about 139-200 BPM), snare, wobble rate,
-                 filter resonance, echo level
-    d2_level     kick weight, sub and Reese level, bass cutoff floor, drive, EQ bass
-    d1_level     hats, how far the kick envelope opens the filter, EQ treble
+    pair_level   resolves the mix: wobble, resonance and distortion all fall away as it
+                 rises, the tempo settles very slightly, and the echo opens up
+    max(d1, d2)  kick and snare weight -- the backbone grows as anyone engages
+    d1_level     hats and treble, so detail lives up top
+    d2_level     sub and Reese level, bass cutoff floor, drive amount, EQ bass
     stale        mutes everything, so silence means nobody is connected
+
+Nothing is read raw: every expression reads dnb_ctl, the 0.35 s smoothed copy of STATE, so no
+level, tempo, cutoff or mute can step in a single frame.
 """
 import io
 import os
@@ -61,12 +71,20 @@ TOCP = os.path.join(HERE, 'expanded', 'dual-alpha-V16.toe.toc')
 NET = 'project1'
 toc = [l.rstrip('\n') for l in io.open(TOCP, encoding='utf-8')]
 
-ST = "op('SYNCD/container1websocket_example/STATE')"
+STATE_PATH = 'SYNCD/container1websocket_example/STATE'
+# Every expression below reads the *smoothed* copy, never STATE directly. STATE steps:
+# it updates about 8 times a second and `stale` flips in one frame, which turns silence
+# into a full mix instantly and makes `speed` jump in pitch. dnb_ctl fixes that once,
+# for all of them.
+ST = "op('dnb_ctl')"
 L1 = ST + "['d1_level']"
 L2 = ST + "['d2_level']"
 PR = ST + "['pair_level']"
 LIVE = '(1-' + ST + "['stale'])"
-SPEED = '0.82+0.36*' + PR
+# Engagement: is anyone in alpha at all. Sync: are they in it together.
+EN = 'max(' + L1 + ',' + L2 + ')'
+CALM = '(1-' + PR + ')'          # the agitation sources ride this, not pair_level
+SPEED = '1.00-0.05*' + PR        # a settle, not a lurch
 
 
 def q(s):
@@ -126,15 +144,28 @@ def set_parm(name, line):
     io.open(path, 'w', encoding='utf-8', newline='\n').write('\n'.join(lines))
 
 
+# ---------------------------------------------------------------- smoothed controls
+# A Select CHOP reaches across containers by path; a wired input cannot -- it resolves
+# sibling names only, and wiring the path directly fails with "Not enough sources
+# specified", which leaves every expression downstream reading None.
+add('dnb_state', 'CHOP:select', (-1850, 1500, 130, 90),
+    parms=['chops 0 ' + STATE_PATH, 'channames 0 *'])
+add('dnb_ctl', 'CHOP:filter', (-1700, 1500, 130, 90), inputs=['dnb_state'],
+    parms=['width 0 0.35'])
+
 # ---------------------------------------------------------------- the five stems
 X, Y = -1400, 1500
 STEMS = (
-    ('dnb_kick',   'break_kick.wav',     '0.30+0.70*' + L2),
-    ('dnb_snare',  'break_snare.wav',    '0.20+0.80*' + PR),
-    ('dnb_haton',  'break_hat_on.wav',   '0.25+0.75*' + L1),
-    ('dnb_hatoff', 'break_hat_off.wav',  '0.15+0.85*' + L1),
+    # Kick and snare are the backbone: they follow engagement, so they get louder as anyone
+    # comes in rather than only when both do.
+    ('dnb_kick',   'break_kick.wav',     '0.30+0.70*' + EN),
+    ('dnb_snare',  'break_snare.wav',    '0.30+0.50*' + EN + '+0.20*' + PR),
+    # The busyness lives up top, where it reads as detail.
+    ('dnb_haton',  'break_hat_on.wav',   '0.20+0.80*' + L1),
+    ('dnb_hatoff', 'break_hat_off.wav',  '0.10+0.90*max(' + L1 + ',' + PR + ')'),
     ('dnb_sub',    'break_sub.wav',      '0.30+0.70*' + L2),
-    ('dnb_reese',  'break_reese.wav',    '0.20+0.80*' + L2),
+    # The growl recedes as they sync: that is the point.
+    ('dnb_reese',  'break_reese.wav',    '0.25+0.55*' + L2 + '*' + CALM),
 )
 for i, (name, wav, vol) in enumerate(STEMS):
     add(name, 'CHOP:audiofilein', (X, Y - i * 160, 130, 90), parms=[
@@ -151,23 +182,25 @@ add('dnb_envabs', 'CHOP:limit', (X + 200, Y, 130, 90), inputs=['dnb_kick'],
 add('dnb_env', 'CHOP:filter', (X + 350, Y, 130, 90), inputs=['dnb_envabs'],
     parms=['width 0 0.08'])
 add('dnb_wob', 'CHOP:lfo', (X + 200, Y - 760, 130, 90), parms=[
-    expr('frequency', 3.0, '1.5+6.0*' + PR), 'amp 0 1'])
+    expr('frequency', 1.6, '1.0+1.2*' + CALM), 'amp 0 1'])
 
 # ---------------------------------------------------------------- bass: filter envelope + drive
-CUTOFF = ('90+700*' + L2 + "+2200*op('dnb_env')[0]*" + L1
-          + "+450*" + PR + "*op('dnb_wob')[0]")
+# Exponential, so the wobble moves in octaves rather than in hertz, and shallow: 0.30 of
+# an octave at full pair_level and none below it. The base is the filter envelope.
+CUTOFF = ('(90+700*' + L2 + "+2200*op('dnb_env')[0]*" + L1 + ')'
+          + "*2**(0.35*" + CALM + "*op('dnb_wob')[0])")
 add('dnb_bassfilt', 'CHOP:audiofilter', (X + 350, Y - 640, 130, 90), inputs=['dnb_reese'], parms=[
     'filter 0 lowpass', 'units 0 frequency',
     expr('cutofffrequency', 400, CUTOFF),
-    expr('resonance', 1.0, '0.3+2.2*' + PR)])
+    expr('resonance', 0.4, '0.8*' + CALM)])
 add('dnb_drive', 'CHOP:audiodyna', (X + 500, Y - 640, 130, 90), inputs=['dnb_bassfilt'], parms=[
-    expr('inputgain', 6.0, '16.0*' + L2),
+    expr('inputgain', 4.0, '12.0*' + L2 + '*' + CALM),
     'enablelimiter 0 on', 'thresholdlimiter 0 -1'])
 
 # ---------------------------------------------------------------- sum, EQ, compress, echo
 add('dnb_sum', 'CHOP:math', (X + 700, Y - 300, 130, 90),
     inputs=['dnb_kick', 'dnb_snare', 'dnb_haton', 'dnb_swing', 'dnb_sub', 'dnb_drive'],
-    parms=['chopop 0 add', 'gain 0 0.30'])
+    parms=['chopop 0 add', 'gain 0 0.22'])
 
 eq = ['drywet 0 1']
 for b in range(1, 5):                      # bass bands, person 2
@@ -182,7 +215,7 @@ add('dnb_eq', 'CHOP:audioband', (X + 850, Y - 300, 130, 90), inputs=['dnb_sum'],
 add('dnb_echo', 'CHOP:delay', (X + 1000, Y - 140, 130, 90), inputs=['dnb_eq'], parms=[
     'delay 0 0.1058', 'delayunit 0 seconds'])
 add('dnb_echolvl', 'CHOP:math', (X + 1150, Y - 140, 130, 90), inputs=['dnb_echo'],
-    parms=[expr('gain', 0.25, '0.12+0.38*' + PR)])
+    parms=[expr('gain', 0.2, '0.10+0.22*' + PR)])
 add('dnb_mix', 'CHOP:math', (X + 1300, Y - 300, 130, 90),
     inputs=['dnb_eq', 'dnb_echolvl'], parms=['chopop 0 add'])
 

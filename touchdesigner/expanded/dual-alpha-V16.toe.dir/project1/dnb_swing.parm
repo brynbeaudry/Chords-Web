@@ -1,5 +1,5 @@
 ?
-delay 17 0.02 0.012+0.023*op('SYNCD/container1websocket_example/STATE')['pair_level']
+delay 17 0.02 0.012+0.023*op('dnb_ctl')['pair_level']
 delayunit 0 seconds
 timeslice 0 on
 ?

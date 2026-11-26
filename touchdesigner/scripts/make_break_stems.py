@@ -21,8 +21,10 @@ phase when played together:
 
     break_kick.wav    sine sweep 120 -> 45 Hz, fast decay
     break_snare.wav   noise burst plus a 185 Hz body
-    break_hat_on.wav  high-passed noise on the eighths
-    break_hat_off.wav the off-grid sixteenths, kept separate so swing can delay them
+    break_hat_on.wav  a short inharmonic metal accent on the eighths, 18 ms
+    break_hat_off.wav the off-grid sixteenths, 42 ms so they read as more open, kept
+                      separate so
+                      swing can delay them
     break_sub.wav     the fundamental: a clean sine layer, band limited, left unfiltered
                       in TouchDesigner so the low end never disappears
     break_reese.wav   the growl: three detuned band-limited saws beating against each
@@ -74,7 +76,7 @@ def env(n, attack, decay):
     return out
 
 
-def kick(dur=0.28):
+def kick(i=0, dur=0.28):
     n = int(dur * SR)
     e = env(n, 0.001, 0.055)
     ph = 0.0
@@ -86,10 +88,10 @@ def kick(dur=0.28):
     return out
 
 
-def snare(dur=0.20, seed=3):
-    r = random.Random(seed)
+def snare(i=0, dur=0.20):
+    r = random.Random(300 + i * 29)
     n = int(dur * SR)
-    e = env(n, 0.0005, 0.035)
+    e = env(n, 0.0005, 0.035 * (0.92 + 0.16 * r.random()))
     ph = 0.0
     lp = 0.0
     out = []
@@ -101,18 +103,33 @@ def snare(dur=0.20, seed=3):
     return out
 
 
-def hat(dur=0.055, seed=7):
-    r = random.Random(seed)
+def hat(i=0, openness=0.0):
+    """A quick resonating accent: inharmonic metal that rings and dies, not a noise smack.
+
+    Almost all of the sound is the partial cluster. The noise is only a 2 ms transient to give
+    the stick contact; letting it run for the whole note is what made the old one sound like
+    something being slapped. The partials are deliberately not integer multiples -- that is
+    what reads as metal rather than as a pitch.
+    """
+    r = random.Random(900 + i * 37)
+    dur = 0.018 + openness * 0.024
     n = int(dur * SR)
-    e = env(n, 0.0003, 0.010)
-    hp = 0.0
-    prev = 0.0
+    ring = env(n, 0.0002, 0.004 + openness * 0.012)
+    click = env(n, 0.0001, 0.0018)                  # the stick, 2 ms and gone
+    partials = ((9150.0, 1.0), (10730.0, 0.86), (12410.0, 0.70),
+                (13980.0, 0.55), (15360.0, 0.38))
+    jitter = 1.0 + 0.035 * (r.random() - 0.5)
+    ahp = 1.0 - math.exp(-2 * math.pi * 7000.0 / SR)
+    hp1 = hp2 = 0.0
     out = []
-    for i in range(n):
+    for k in range(n):
         noise = r.uniform(-1.0, 1.0)
-        hp = 0.85 * (hp + noise - prev)                    # one-pole high pass
-        prev = noise
-        out.append(hp * e[i])
+        hp1 += ahp * (noise - hp1)
+        h1 = noise - hp1
+        hp2 += ahp * (h1 - hp2)
+        t = k / SR
+        metal = sum(a * math.sin(2 * math.pi * f * jitter * t) for f, a in partials)
+        out.append(0.85 * (metal / len(partials)) * ring[k] + 0.22 * (h1 - hp2) * click[k])
     return out
 
 
@@ -193,14 +210,19 @@ def render_notes(notes, voice, **kw):
     return buf
 
 
-def render(pattern, voice, gain_full=1.0, gain_ghost=0.45):
+def render(pattern, voice, gain_full=1.0, gain_ghost=0.45, ghost_open=0.0):
     buf = [0.0] * N
+    hit_i = 0
     for step, ch in enumerate(pattern):
         if ch == '.':
             continue
         g = gain_full if ch == 'X' else gain_ghost
         start = int(round(step * STEP_S * SR))
-        hit = voice()
+        hit_i += 1
+        try:                                   # hats take an openness, kick and snare do not
+            hit = voice(hit_i, openness=(ghost_open if ch == 'o' else 0.0))
+        except TypeError:
+            hit = voice(hit_i)
         for i, v in enumerate(hit):
             j = start + i
             if j < N:
@@ -228,7 +250,8 @@ print('%g BPM, %d bars, loop %.3f s (%d frames at %d Hz)' % (BPM, BARS, LOOP_S, 
 write_wav('break_kick.wav', render(KICK, kick))
 write_wav('break_snare.wav', render(SNARE, snare))
 write_wav('break_hat_on.wav', render(HAT_ON, hat, gain_full=0.85))
-write_wav('break_hat_off.wav', render(HAT_OFF, hat, gain_full=0.5, gain_ghost=0.42))
+write_wav('break_hat_off.wav', render(HAT_OFF, hat, gain_full=0.5, gain_ghost=0.42,
+                                         ghost_open=0.7))
 # Band split: the sub keeps only the fundamental, the Reese only what sits above it.
 write_wav('break_sub.wav', lowpass(render_notes(BASS_NOTES, sub_note), 110.0))
 write_wav('break_reese.wav', highpass(render_notes(BASS_NOTES, reese_note), 95.0))

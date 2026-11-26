@@ -1,7 +1,7 @@
 ?
 filter 0 lowpass
 units 0 frequency
-cutofffrequency 17 400 90+700*op('SYNCD/container1websocket_example/STATE')['d2_level']+2200*op('dnb_env')[0]*op('SYNCD/container1websocket_example/STATE')['d1_level']+450*op('SYNCD/container1websocket_example/STATE')['pair_level']*op('dnb_wob')[0]
-resonance 17 1.0 0.3+2.2*op('SYNCD/container1websocket_example/STATE')['pair_level']
+cutofffrequency 17 400 (90+700*op('dnb_ctl')['d2_level']+2200*op('dnb_env')[0]*op('dnb_ctl')['d1_level'])*2**(0.35*(1-op('dnb_ctl')['pair_level'])*op('dnb_wob')[0])
+resonance 17 0.4 0.8*(1-op('dnb_ctl')['pair_level'])
 timeslice 0 on
 ?

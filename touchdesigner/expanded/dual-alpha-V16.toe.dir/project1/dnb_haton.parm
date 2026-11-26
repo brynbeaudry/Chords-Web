@@ -2,7 +2,7 @@
 file 0 break_hat_on.wav
 play 0 on
 repeat 0 on
-speed 17 1.0 0.82+0.36*op('SYNCD/container1websocket_example/STATE')['pair_level']
-volume 17 0.5 (1-op('SYNCD/container1websocket_example/STATE')['stale'])*(0.25+0.75*op('SYNCD/container1websocket_example/STATE')['d1_level'])
+speed 17 1.0 1.00-0.05*op('dnb_ctl')['pair_level']
+volume 17 0.5 (1-op('dnb_ctl')['stale'])*(0.20+0.80*op('dnb_ctl')['d1_level'])
 timeslice 0 on
 ?

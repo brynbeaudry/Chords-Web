@@ -6,16 +6,26 @@
 This reproduces /project1/dnb_* in plain Python from the same stems, and walks through the
 states the two people can be in, eight seconds each, announced in the printout:
 
-    1  nobody connected          everything muted by `stale`
+    1  nobody connected          everything muted
     2  connected, no alpha       the bed: quiet kick and hats, filter shut
     3  person 1 only             hats and treble come up, kick envelope opens the filter
-    4  person 2 only             kick, bass, distortion and bass EQ come up
-    5  both, person 1 deeper     together: faster, snare in, swing, echo, resonance
-    6  both, deepest             everything at full: fastest, widest filter, most drive
+    4  person 2 only             kick, bass, drive and bass EQ come up
+    5  both, person 1 deeper     coming together: the wobble and the drive start to let go
+    6  both, deepest             resolved: no wobble, no distortion, clean sub, open echo
 
-The bass is two layers: a clean sine sub carrying the fundamental, untouched, and a
-Reese (three detuned band-limited saws) carrying the growl, which is the only part the
-filter, the wobble and the drive act on.
+Nothing steps. The section targets pass through the same 0.35 s smoothing that `dnb_ctl`
+applies in TouchDesigner before anything reads it, so levels glide, the mute fades, the filter
+sweeps and the playback speed eases instead of jumping in pitch. That matters as much as the
+sounds do: silence followed by an instant full mix is a slam, not a cue.
+
+The bass is two layers: a clean sine sub carrying the fundamental, untouched, and a Reese
+(three detuned band-limited saws) carrying the growl, which is the only part the filter, the
+wobble and the drive act on.
+
+The mapping resolves rather than escalates: wobble, resonance and distortion all ride
+(1 - pair_level), so they are there while the two are apart and gone once they hold the sync.
+Alpha is calm focus, so arriving should sound settled. What grows instead is the weight of the
+kick and snare and the detail in the hats.
 
 It is a close approximation, not the TouchDesigner graph: the low-pass is a one-pole rather
 than TD's Audio Filter, and the EQ is two shelves rather than 16 bands. Gain staging, the
@@ -23,7 +33,6 @@ envelope follower, the wobble, the swing delay, the soft clip and the -1 dB limi
 Use it to judge whether the mapping feels right; use TouchDesigner for the real thing.
 """
 import array
-import io
 import math
 import os
 import sys
@@ -34,23 +43,23 @@ AUD = os.path.join(HERE, 'audio')
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(AUD, 'dnb_preview.wav')
 SR = 44100
 SECTION_S = 8.0
+SMOOTH_S = 0.12                       # one-pole time constant; settles in about 0.35 s
 
-# (label, d1_level, d2_level) -- pair_level is min() when both are in, as STATE computes it
+# (label, d1_level, d2_level); None means not connected at all
 SECTIONS = [
-    ('nobody connected (stale: muted)', None, None),
-    ('connected, no alpha',             0.0,  0.0),
-    ('person 1 only',                   0.9,  0.0),
-    ('person 2 only',                   0.0,  0.9),
-    ('both in, person 1 deeper',        0.9,  0.4),
-    ('both in, deepest',                1.0,  1.0),
+    ('nobody connected (muted)', None, None),
+    ('connected, no alpha',      0.0,  0.0),
+    ('person 1 only',            0.9,  0.0),
+    ('person 2 only',            0.0,  0.9),
+    ('both in, person 1 deeper', 0.9,  0.4),
+    ('both in, deepest',         1.0,  1.0),
 ]
 
 
 def load(name):
     with wave.open(os.path.join(AUD, name)) as w:
-        n = w.getnframes()
         raw = array.array('h')
-        raw.frombytes(w.readframes(n))
+        raw.frombytes(w.readframes(w.getnframes()))
         return [v / 32768.0 for v in raw]
 
 
@@ -71,67 +80,67 @@ def tap(buf, pos):
     return buf[i] * (1.0 - f) + buf[j] * f
 
 
-out = []
-print('rendering %d sections of %.0f s' % (len(SECTIONS), SECTION_S))
-for label, l1, l2 in SECTIONS:
-    live = 0.0 if l1 is None else 1.0
-    l1 = l1 or 0.0
-    l2 = l2 or 0.0
-    pair = min(l1, l2) if (l1 > 0 and l2 > 0) else 0.0
+for label, a, b in SECTIONS:
+    print('  %-28s d1 %-5s d2 %-5s' % (label, 'off' if a is None else a,
+                                       'off' if b is None else b))
 
-    speed = 0.82 + 0.36 * pair
-    v_kick = live * (0.30 + 0.70 * l2)
-    v_snare = live * (0.20 + 0.80 * pair)
-    v_hat = live * (0.25 + 0.75 * l1)
-    v_hatoff = live * (0.15 + 0.85 * l1)
-    v_sub = live * (0.30 + 0.70 * l2)
-    v_reese = live * (0.20 + 0.80 * l2)
-    swing_s = 0.012 + 0.023 * pair
-    wob_hz = 1.5 + 6.0 * pair
-    res = 0.3 + 2.2 * pair
-    drive = 10.0 ** ((16.0 * l2) / 20.0)            # inputgain dB -> linear
+total = int(SECTION_S * SR * len(SECTIONS))
+smooth = 1.0 - math.exp(-1.0 / (SMOOTH_S * SR))
+env_a = 1.0 - math.exp(-1.0 / (0.08 * SR))
+
+l1 = l2 = live = 0.0                  # the smoothed controls: what dnb_ctl holds
+pos = 0.0
+env = 0.0
+lp = 0.0
+hist = []
+echo_n = int(0.1058 * SR)
+out = []
+
+for n in range(total):
+    sec = min(len(SECTIONS) - 1, int(n / (SECTION_S * SR)))
+    _, t1, t2 = SECTIONS[sec]
+    l1 += smooth * ((t1 or 0.0) - l1)
+    l2 += smooth * ((t2 or 0.0) - l2)
+    live += smooth * ((0.0 if t1 is None else 1.0) - live)
+
+    pair = min(l1, l2) if (l1 > 0.001 and l2 > 0.001) else 0.0
+    en = max(l1, l2)
+    calm = 1.0 - pair                 # the agitation sources ride this, not pair
+    speed = 1.00 - 0.05 * pair        # a settle, not a lurch
+    drive = 10.0 ** ((12.0 * l2 * calm) / 20.0)
     eq_bass = 10.0 ** ((-3.0 + 9.0 * l2) / 20.0)
     eq_treb = 10.0 ** ((-3.0 + 9.0 * l1) / 20.0)
-    echo_g = 0.12 + 0.38 * pair
-    print('  %-34s speed %.2f  cutoff-base %4.0f Hz  drive %+5.1f dB  swing %4.1f ms'
-          % (label, speed, 90 + 700 * l2, 16.0 * l2, swing_s * 1000))
+    swing_n = int((0.012 + 0.023 * pair) * SR)
 
-    pos = 0.0
-    env = 0.0                                        # the kick envelope follower, 80 ms
-    lp = 0.0                                         # the bass low-pass state
-    swing_n = int(swing_s * SR)
-    hist = []                                        # for the echo, a dotted eighth
-    echo_n = int(0.1058 * SR)
-    for i in range(int(SECTION_S * SR)):
-        k = tap(KICK, pos)
-        env += (abs(k) - env) * (1.0 - math.exp(-1.0 / (0.08 * SR)))
-        cutoff = 90 + 700 * l2 + 2200 * env * l1 + 450 * pair * math.sin(
-            2 * math.pi * wob_hz * i / SR)
-        cutoff = max(40.0, min(6000.0, cutoff))
-        a = 1.0 - math.exp(-2 * math.pi * cutoff / SR)
-        # Only the Reese is filtered and driven. The sub goes through untouched: the
-        # moment you low-pass or clip the fundamental it stops being a sub.
-        r = tap(REESE, pos) * v_reese
-        lp += a * (r + res * 0.25 * (r - lp) - lp)   # one-pole with a little resonance
-        growl = math.tanh(lp * drive)
-        sub = tap(SUB, pos) * v_sub
-        bass = sub + growl * 0.9
-        dry = (k * v_kick
-               + tap(SNARE, pos) * v_snare
-               + tap(HATON, pos) * v_hat
-               + tap(HATOFF, pos - swing_n * speed) * v_hatoff
-               + bass) * 0.30
-        lo = dry * eq_bass * 0.6
-        hi = dry * eq_treb * 0.4
-        s = lo + hi
-        hist.append(s)
-        if len(hist) > echo_n:
-            s += hist[-echo_n] * echo_g
-        out.append(s)
-        pos += speed
+    k = tap(KICK, pos)
+    env += env_a * (abs(k) - env)
+    base = 90 + 500 * l2 + 1600 * env * l1
+    wob = math.sin(2 * math.pi * (1.0 + 1.2 * calm) * n / SR)
+    cutoff = max(40.0, min(6000.0, base * 2.0 ** (0.35 * calm * wob)))
+    a_lp = 1.0 - math.exp(-2 * math.pi * cutoff / SR)
+    res = 0.8 * calm
 
-# -1 dB limiter, as the last stage in TouchDesigner
-CEIL = 10.0 ** (-1.0 / 20.0)
+    # Only the Reese is filtered and driven. The sub goes through untouched: the moment you
+    # low-pass or clip the fundamental it stops being a sub. The growl recedes as they sync.
+    r = tap(REESE, pos) * live * (0.25 + 0.55 * l2 * calm)
+    lp += a_lp * (r + res * 0.25 * (r - lp) - lp)
+    growl = math.tanh(lp * drive)
+    sub = tap(SUB, pos) * live * (0.30 + 0.70 * l2)
+
+    dry = (k * live * (0.30 + 0.70 * en)
+           + tap(SNARE, pos) * live * (0.30 + 0.50 * en + 0.20 * pair)
+           + tap(HATON, pos) * live * (0.20 + 0.80 * l1)
+           + tap(HATOFF, pos - swing_n * speed) * live * (0.10 + 0.90 * max(l1, pair))
+           + sub + growl * 0.9) * 0.22
+
+    s = dry * eq_bass * 0.6 + dry * eq_treb * 0.4
+    hist.append(s)
+    if len(hist) > echo_n:
+        s += hist[-echo_n] * (0.10 + 0.22 * pair)
+    out.append(s)
+    pos += speed
+
+CEIL = 10.0 ** (-1.0 / 20.0)          # the -1 dB limiter, the last stage in TouchDesigner
 peak = max(1e-9, max(abs(v) for v in out))
 if peak > CEIL:
     out = [v * (CEIL / peak) for v in out]
@@ -143,4 +152,4 @@ with wave.open(OUT, 'wb') as w:
     w.setsampwidth(2)
     w.setframerate(SR)
     w.writeframes(data.tobytes())
-print('wrote %s  (%.1f s, %.1f kB)' % (OUT, len(out) / SR, os.path.getsize(OUT) / 1024.0))
+print('wrote %s  (%.1f s, %.0f kB)' % (OUT, len(out) / SR, os.path.getsize(OUT) / 1024.0))
