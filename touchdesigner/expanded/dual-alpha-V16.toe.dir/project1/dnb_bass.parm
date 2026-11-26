@@ -1,8 +1,0 @@
-?
-file 0 break_bass.wav
-play 0 on
-repeat 0 on
-speed 17 1.0 0.82+0.36*op('SYNCD/container1websocket_example/STATE')['pair_level']
-volume 17 0.5 (1-op('SYNCD/container1websocket_example/STATE')['stale'])*(0.25+0.75*op('SYNCD/container1websocket_example/STATE')['d2_level'])
-timeslice 0 on
-?

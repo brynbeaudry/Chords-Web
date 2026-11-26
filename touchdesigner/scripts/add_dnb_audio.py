@@ -12,7 +12,7 @@ The signal path, all in /project1, prefixed dnb_
 Five stems play in phase from touchdesigner/audio/ (copied next to the .toe, like the models),
 each at its own level, all sharing one speed:
 
-    dnb_kick  dnb_snare  dnb_haton  dnb_hatoff  dnb_bass
+    dnb_kick  dnb_snare  dnb_haton  dnb_hatoff  dnb_sub  dnb_reese
 
     dnb_hatoff -> dnb_swing       Delay CHOP: pushes the off-grid sixteenths late. That is
                                   what swing physically is, which is why the hat was rendered
@@ -20,7 +20,9 @@ each at its own level, all sharing one speed:
     dnb_kick   -> dnb_envabs      Limit CHOP, Positive Only: rectifies the kick
                -> dnb_env         Filter CHOP, 80 ms: an envelope follower on the beat
     dnb_wob                       LFO CHOP: the wobble, its rate from pair_level
-    dnb_bass   -> dnb_bassfilt    Audio Filter, low pass. Cutoff = floor + person 2's weight
+    dnb_sub                       goes straight to the mix: low-passing or clipping the
+                                  fundamental is how a sub stops being a sub
+    dnb_reese  -> dnb_bassfilt    Audio Filter, low pass. Cutoff = floor + person 2's weight
                                   + the kick envelope + the wobble. This is the filter
                                   envelope: it opens on every kick.
                -> dnb_drive       Audio Dynamics as distortion: input gain into a limiter is
@@ -44,7 +46,7 @@ Person 1 is the right side, person 2 the left.
 
     pair_level   speed (0.82 - 1.18x, about 139-200 BPM), snare, wobble rate,
                  filter resonance, echo level
-    d2_level     kick weight, bass level, bass cutoff floor, distortion drive, EQ bass
+    d2_level     kick weight, sub and Reese level, bass cutoff floor, drive, EQ bass
     d1_level     hats, how far the kick envelope opens the filter, EQ treble
     stale        mutes everything, so silence means nobody is connected
 """
@@ -131,7 +133,8 @@ STEMS = (
     ('dnb_snare',  'break_snare.wav',    '0.20+0.80*' + PR),
     ('dnb_haton',  'break_hat_on.wav',   '0.25+0.75*' + L1),
     ('dnb_hatoff', 'break_hat_off.wav',  '0.15+0.85*' + L1),
-    ('dnb_bass',   'break_bass.wav',     '0.25+0.75*' + L2),
+    ('dnb_sub',    'break_sub.wav',      '0.30+0.70*' + L2),
+    ('dnb_reese',  'break_reese.wav',    '0.20+0.80*' + L2),
 )
 for i, (name, wav, vol) in enumerate(STEMS):
     add(name, 'CHOP:audiofilein', (X, Y - i * 160, 130, 90), parms=[
@@ -153,7 +156,7 @@ add('dnb_wob', 'CHOP:lfo', (X + 200, Y - 760, 130, 90), parms=[
 # ---------------------------------------------------------------- bass: filter envelope + drive
 CUTOFF = ('90+700*' + L2 + "+2200*op('dnb_env')[0]*" + L1
           + "+450*" + PR + "*op('dnb_wob')[0]")
-add('dnb_bassfilt', 'CHOP:audiofilter', (X + 350, Y - 640, 130, 90), inputs=['dnb_bass'], parms=[
+add('dnb_bassfilt', 'CHOP:audiofilter', (X + 350, Y - 640, 130, 90), inputs=['dnb_reese'], parms=[
     'filter 0 lowpass', 'units 0 frequency',
     expr('cutofffrequency', 400, CUTOFF),
     expr('resonance', 1.0, '0.3+2.2*' + PR)])
@@ -163,7 +166,7 @@ add('dnb_drive', 'CHOP:audiodyna', (X + 500, Y - 640, 130, 90), inputs=['dnb_bas
 
 # ---------------------------------------------------------------- sum, EQ, compress, echo
 add('dnb_sum', 'CHOP:math', (X + 700, Y - 300, 130, 90),
-    inputs=['dnb_kick', 'dnb_snare', 'dnb_haton', 'dnb_swing', 'dnb_drive'],
+    inputs=['dnb_kick', 'dnb_snare', 'dnb_haton', 'dnb_swing', 'dnb_sub', 'dnb_drive'],
     parms=['chopop 0 add', 'gain 0 0.30'])
 
 eq = ['drywet 0 1']

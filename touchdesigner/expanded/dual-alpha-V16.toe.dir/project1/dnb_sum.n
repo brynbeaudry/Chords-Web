@@ -7,7 +7,8 @@ inputs
 1 	dnb_snare
 2 	dnb_haton
 3 	dnb_swing
-4 	dnb_drive
+4 	dnb_sub
+5 	dnb_drive
 }
 color 0.85 0.55 0.2 
 end

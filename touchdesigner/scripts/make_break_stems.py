@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthesise a drum-and-bass breakbeat as four separate stems, for the EEG to mix.
+"""Synthesise a drum-and-bass breakbeat as six separate stems, for the EEG to mix.
 
     python3 scripts/make_break_stems.py            # writes touchdesigner/audio/*.wav
 
@@ -16,15 +16,17 @@ actually needs. These are original waveforms, no sample content.
 
 What it writes, into touchdesigner/audio/
 -----------------------------------------
-Four mono 16-bit 44.1 kHz loops, all exactly 2 bars at 170 BPM (2.824 s), so they stay in
+Six mono 16-bit 44.1 kHz loops, all exactly 2 bars at 170 BPM (2.824 s), so they stay in
 phase when played together:
 
     break_kick.wav    sine sweep 120 -> 45 Hz, fast decay
     break_snare.wav   noise burst plus a 185 Hz body
     break_hat_on.wav  high-passed noise on the eighths
     break_hat_off.wav the off-grid sixteenths, kept separate so swing can delay them
-    break_bass.wav    saw-ish sub following the kick, deliberately harmonically rich so a
-                      low-pass in TouchDesigner can take it from clean sub to growl
+    break_sub.wav     the fundamental: a clean sine layer, band limited, left unfiltered
+                      in TouchDesigner so the low end never disappears
+    break_reese.wav   the growl: three detuned band-limited saws beating against each
+                      other, a Reese bass, which is what the low-pass, wobble and drive act on
 
 The pattern is a syncopated two-bar breakbeat in sixteenths: the kick lands off the grid in
 bar 2 and the snare carries the backbeat with ghost hits, which is what gives it the jungle
@@ -57,7 +59,9 @@ SNARE = '....X.......X..o' '....X..o....X...'
 # off-grid sixteenths are pushed late by the Delay CHOP. That is what swing physically is.
 HAT_ON  = 'X...X...X...X...' 'X...X...X...X...'
 HAT_OFF = '..o...o...o...o.' '..o...o...o...o.'
-BASS  = 'X.........X.....' '..X.......X.....'   # follows the kick
+# A four-note riff over the two bars, as (sixteenth step, Hz, seconds). A1, A1, C2, G1:
+# root, root, up a minor third, down a tone. Long enough to sustain under the break.
+BASS_NOTES = ((0, 55.00, 0.62), (10, 55.00, 0.40), (18, 65.41, 0.62), (26, 48.99, 0.46))
 
 
 def env(n, attack, decay):
@@ -112,18 +116,81 @@ def hat(dur=0.055, seed=7):
     return out
 
 
-def bass(dur=0.42):
-    """Saw-ish, so a low-pass downstream can open it from sub to growl."""
+def _harmonics(f):
+    """How many harmonics fit under 4.5 kHz -- band limited, so no aliasing fold-down."""
+    return max(1, int(4500.0 / f))
+
+
+def sub_note(f, dur):
+    """The fundamental. A sine, plus a little second harmonic so it survives small speakers,
+    and a short pitch drop at the top for weight. Deliberately no higher content."""
     n = int(dur * SR)
-    e = env(n, 0.004, 0.16)
-    f = 55.0
+    e = env(n, 0.006, dur * 0.55)
     out = []
+    ph = 0.0
     for i in range(n):
-        t = i / SR
-        saw = 2.0 * ((t * f) % 1.0) - 1.0
-        sub = math.sin(2 * math.pi * f * t)
-        out.append((0.55 * saw + 0.75 * sub) * e[i])
+        drop = 1.0 + 0.18 * math.exp(-i / (0.035 * SR))     # a brief downward glide
+        ph += 2 * math.pi * f * drop / SR
+        out.append((math.sin(ph) + 0.18 * math.sin(2 * ph)) * e[i])
     return out
+
+
+def reese_note(f, dur, detune=0.010):
+    """The growl: three band-limited saws, two of them detuned, beating against each other.
+    Built additively so there is nothing above 4.5 kHz to alias."""
+    n = int(dur * SR)
+    e = env(n, 0.010, dur * 0.7)
+    freqs = (f, f * (1.0 + detune), f * (1.0 - detune * 1.7))
+    out = [0.0] * n
+    for fi in freqs:
+        k = _harmonics(fi)
+        for h in range(1, k + 1):
+            w = 2 * math.pi * fi * h / SR
+            amp = 1.0 / (h ** 0.65)                         # flatter than a saw: bite
+            for i in range(n):
+                out[i] += math.sin(w * i) * amp
+    g = 1.0 / (len(freqs) * 2.2)
+    return [v * g * e[i] for i, v in enumerate(out)]
+
+
+def lowpass(x, hz, poles=2):
+    a = 1.0 - math.exp(-2 * math.pi * hz / SR)
+    for _ in range(poles):
+        y = 0.0
+        out = []
+        for v in x:
+            y += a * (v - y)
+            out.append(y)
+        x = out
+    return x
+
+
+def highpass(x, hz, poles=2):
+    a = 1.0 - math.exp(-2 * math.pi * hz / SR)
+    for _ in range(poles):
+        y = 0.0
+        out = []
+        for v in x:
+            y += a * (v - y)
+            out.append(v - y)
+        x = out
+    return x
+
+
+def render_notes(notes, voice, **kw):
+    """Place pitched notes on the sixteenth grid, wrapping at the loop end."""
+    buf = [0.0] * N
+    cache = {}
+    for step, f, dur in notes:
+        key = (f, dur)
+        if key not in cache:
+            cache[key] = voice(f, dur, **kw)
+        hit = cache[key]
+        start = int(round(step * STEP_S * SR))
+        for i, v in enumerate(hit):
+            j = start + i
+            buf[j if j < N else j - N] += v
+    return buf
 
 
 def render(pattern, voice, gain_full=1.0, gain_ghost=0.45):
@@ -162,5 +229,7 @@ write_wav('break_kick.wav', render(KICK, kick))
 write_wav('break_snare.wav', render(SNARE, snare))
 write_wav('break_hat_on.wav', render(HAT_ON, hat, gain_full=0.85))
 write_wav('break_hat_off.wav', render(HAT_OFF, hat, gain_full=0.5, gain_ghost=0.42))
-write_wav('break_bass.wav', render(BASS, bass))
-print('all four are the same length, so they stay in phase when played together')
+# Band split: the sub keeps only the fundamental, the Reese only what sits above it.
+write_wav('break_sub.wav', lowpass(render_notes(BASS_NOTES, sub_note), 110.0))
+write_wav('break_reese.wav', highpass(render_notes(BASS_NOTES, reese_note), 95.0))
+print('all six are the same length, so they stay in phase when played together')

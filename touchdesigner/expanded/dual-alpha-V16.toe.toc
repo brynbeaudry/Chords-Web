@@ -1238,8 +1238,10 @@ project1/dnb_haton.n
 project1/dnb_haton.parm
 project1/dnb_hatoff.n
 project1/dnb_hatoff.parm
-project1/dnb_bass.n
-project1/dnb_bass.parm
+project1/dnb_sub.n
+project1/dnb_sub.parm
+project1/dnb_reese.n
+project1/dnb_reese.parm
 project1/dnb_swing.n
 project1/dnb_swing.parm
 project1/dnb_envabs.n
