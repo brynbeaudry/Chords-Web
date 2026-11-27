@@ -1,4 +1,4 @@
 ?
-renamefrom 0 "d1_w d2_w"
+renamefrom 0 "d2_w d1_w"
 renameto 0 "chan2 chan5"
 ?

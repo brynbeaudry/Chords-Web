@@ -14,7 +14,7 @@ flowchart TB
     B["2 · Open TouchDesigner<br/>dual-alpha-V16.toe from the TD/ folder"]
     C["3 · Check the link<br/>green dot · NO DATA clears"]
     D["4 · Headsets on<br/>connect devices · chips green"]
-    E["5 · Show settings<br/>Hold time 3 · Relative 0 · Forgiveness 1"]
+    E["5 · Show settings<br/>Hold time 0.2 · Relative 0 · Forgiveness 1"]
     F["6 · Run sessions<br/>script · marks · record"]
     G["7 · After the show<br/>save · close"]
     A --> B --> C --> D --> E --> F --> G
@@ -26,8 +26,8 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    H1["🧠 headset 1<br/>person 1 · right side"]
-    H2["🧠 headset 2<br/>person 2 · left side"]
+    H1["🧠 headset 1<br/>person 1 · LEFT side"]
+    H2["🧠 headset 2<br/>person 2 · RIGHT side"]
     APP["💻 Chrome · /dual-alpha<br/>detector · chips · lane"]
     TD["🎨 TouchDesigner · V16<br/>port 9000"]
     OUT["📽 projection"]
@@ -48,7 +48,7 @@ flowchart TB
 | **TouchDesigner 2025** | on the same computer, or on a second one on the same network |
 | The **`TD/` folder** from Kaz's `TD.zip` | it holds the face and object models; V16 must sit inside it ([ASSETS.md](ASSETS.md)) |
 | `dual-alpha-V16.toe` | from this folder (`touchdesigner/` in the repo) |
-| Two **NPG Lite** headsets, charged, with gel electrodes | three electrodes each (O1, Oz, O2) plus ground and reference on the mastoids |
+| Two **NPG Lite** headsets, charged, with gel electrodes | three electrodes each (O1, Oz, O2) on the back of the head, plus ground and reference on the mastoids. Wired with fewer than three? Set **Electrodes in use** in Settings ([§1](#1-start-chords-web)) |
 | Optional: Python 3 | for `mock_sender.py`, to test TouchDesigner with no headsets |
 
 ---
@@ -79,6 +79,31 @@ flowchart TB
 | `?debug=1` | `/dual-alpha?debug=1` | logs every reading and message in Chrome's console (View → Developer → JavaScript Console) |
 
 Example with several: `http://localhost:3000/dual-alpha?td=192.168.1.20:9000&mains=50`.
+
+### The Settings panel
+
+How strictly a signal is judged is **not** in the address. Open **Settings** in the toolbar. Everything in it applies immediately — no reload, so the headsets stay connected and a calibration already done is not thrown away — and is remembered on that computer. **Back to defaults** undoes the lot.
+
+| Setting | Default | What it is for |
+|---|---|---|
+| **Electrodes in use** | 3 | How many of the three inputs have an electrode on them. The rest leave the vote |
+| **Mains pickup can reject an electrode** | **off** | Whether mains hum alone may turn an electrode red |
+| **Restless rejects an electrode over** | 50 % | Share of the last 10 s that may be artifact before an electrode goes red |
+
+**Electrodes in use matters more than it looks.** A person is `ok` only when **no electrode left switched in is red**, so an input with nothing plugged into it floats, rails, goes red, and holds that person at **not ok** for the whole show — their side greys out in TouchDesigner and `pair_level` stays at 0 however good the one real electrode is. Set it to **1** for a headset wired as one active electrode plus reference and ground, and the unused inputs go dashed and read *no electrode · not in the vote* instead of pretending to be faults.
+
+*(`?chans=`, `?mainsred=` and `?artifact=` still work in the address as a one-off override of the stored value, for old bookmarks.)*
+
+**Where the electrodes go.** The labels O1, Oz and O2 are the occipital sites: back of the head, just above and either side of the inion, with reference and ground on the mastoids. That is where alpha is strongest, so it is the best place to put them.
+
+**But the forehead and behind the ear do work.** Alpha spreads across the whole scalp, and detecting it from frontal and behind-the-ear sites is ordinary practice — it is exactly what a Muse does (AF7/AF8 on the forehead, TP9/TP10 behind the ears). So a temple-or-forehead electrode with reference and ground on the mastoids is a workable montage, not a broken one. Two things change:
+
+* **The peak is smaller.** A frontal electrode sees a few dB less than an occipital one, and the fixed 5 dB entry level can sit above everything that person produces. **Run Calibrate.** The 15 s check measures that person's own entry and exit levels *and* their ceiling, and all three are applied to them alone — which is the whole point of it on a weak montage. `?enter=4` is the blunter version if you have no time for the check.
+* **They pick up more muscle and eye movement.** The temple sits on the temporalis muscle, so clenching and swallowing show up; the mid-forehead sees blinks. That reads as *restless*, and above half of the last 10 s it turns the electrode red. Ask for a loose jaw and fewer hard blinks; it is the placement, not the person's state.
+
+**When a person shows clear alpha but never reaches `ok`.** Look at what is red. The quality rules are *stricter than the detector needs*: the 50 µV mains limit was set against the **old** detector, which reported false alpha 56–100 % of the time at that level. The current one analyses 3–45 Hz, so a 50 or 60 Hz line is not even in the band it looks at — mains is a contact-quality measure here, not a detection one. **This is why the mains rule is off by default**: in Settings, *Mains pickup can reject an electrode* starts unticked, so hum alone can no longer force a person's side grey. The figure is still measured, still shown, and still turns the chip amber — it is still the best guide to how well an electrode is sitting. Railing and restlessness still reject an electrode on their own. If you want the old behaviour back, tick it; the toolbar then says *mains rejects over 50 µV* in amber, so a green chip in a noisy room is never mistaken for a measurement. Everything in Settings applies to **both people** — quality is decided in one place, `channelQuality`, and nothing about it is per-device.
+
+**The 50/60 Hz notch is already applied**, before any alpha is measured — that is what `?mains=` selects. The `mains … µV` figure on each chip is how much hum the electrode is picking up, which is a contact-quality measure, not something left in the signal. If a chip says `50 Hz?` or `60 Hz?`, the notch is set to the wrong one and the fix is to reload with the other `?mains=`.
 
 **What you should see now.** A toolbar with **Connect device 1**, **Connect device 2**, a grey dot reading **TD searching · 0 sent**, **Record**, and the recordings list. The page keeps trying to reach TouchDesigner on its own; there is no connect button.
 
@@ -157,7 +182,7 @@ With Chords-Web open and TouchDesigner running:
 
   **Add `--stdlib` for anything left running.** Without it the sender uses the `websockets` package, which pings the socket and hangs up with `keepalive ping timeout` when TouchDesigner's Web Server DAT does not answer — a loop left running for a few minutes dies on its own. `--stdlib` uses the sender's own client, which does not ping; a 100 s loop ran clean. On Windows the command is `python`, not `python3`.
 
-**In the scripted scenario you should see**, in each 60 s loop: from about 5 s the right head turns forward and reaches toward the left and back; at about 15 s both heads turn to face each other; about 3 s later the transition plays; at about 38 s the right object goes grey and its head turns away; at 47 s **CONTRACT ERROR** flashes once.
+**In the scripted scenario you should see**, in each 60 s loop: from about 5 s the left head turns forward and reaches toward the right and back; at about 15 s both heads turn to face each other; about 3 s later the transition plays; at about 38 s the left object goes grey and its head turns away; at 47 s **CONTRACT ERROR** flashes once.
 
 ---
 
@@ -189,22 +214,95 @@ With Chords-Web open and TouchDesigner running:
 
 **A quick eyes test per person.** Ask them to close their eyes for 10 s, then open them for 10 s. With eyes closed the chips should show `α` and the person's band in the detector lane should light; with eyes open it should clear within about 2 s. Press **C** when they close their eyes and **O** when they open them: the lane marks the blocks so you can see the detector against what really happened. **X** clears the mark.
 
-### Calibrate: the guided 20 second check
+### Why only one chip shows alpha
 
-**Press Calibrate** in the toolbar once both people are wired and their chips are showing readings. A panel appears with the script to read out, the half that is running, and a countdown.
+Only the **reading electrode** — the one marked `reading`, normally O1 — shows an `α` flag, a green border or a green highlight on the graph. The other two inputs show contact information only: their dot colour, their mains figure, their rail line.
+
+That is deliberate, and it is worth knowing why they used to light up green when they have no electrode of their own:
+
+* **Every channel is measured against the same reference electrode.** So whatever the reference picks up — including any alpha reaching the mastoid — appears in *all three* channels, with the reference's own contribution common to each.
+* **The detector is scale-free.** It reports prominence in dB above each channel's *own* 1/f background, never an absolute microvolt figure — which is what makes it work at all across people and electrode contact. The consequence is that a **faint copy** of a signal containing alpha reports the *same* prominence as the original. Amplitude is irrelevant to it.
+
+Put together: an input with nothing on it picks up a weak version of what the reference sees, and the detector honestly reports "there is an alpha peak here, 6 dB above the background" — because there is. It is just not an independent measurement of anything. Showing that as green was worse than showing nothing, so it no longer does.
+
+**A quick way to see it for yourself:** compare the `… Hz` figure on the three chips. If all three report the same peak frequency, you are looking at one signal appearing three times rather than three measurements.
+
+### Eyes open or eyes closed, per person
+
+Each person has an **eyes open / eyes closed** switch beside their name, and **eyes open is the default** — that is what the piece asks of them: they are watching the projection and reaching alpha through calm focus on it. Telling someone to shut their eyes takes away the thing they are responding to.
+
+It is not cosmetic. Alpha roughly doubles when the eyes close, and the detector's 5 dB entry level was tuned on eyes-closed recordings. Eyes open, the same person's alpha is several dB smaller, so a fixed 5 dB can sit above everything they produce and the piece never responds to them however relaxed they get. The switch moves their entry level:
+
+| Mode | Uncalibrated | After Calibrate |
+|---|---|---|
+| eyes open *(default)* | 3 dB | just above that person's own measured eyes-open baseline |
+| eyes closed | 5 dB | the midpoint of their eyes-closed and eyes-open medians |
+
+Eyes open buys more false positives, deliberately. Eyes closed is the exception — a demonstration, or showing someone what their own alpha looks like.
+
+It only moves the thresholds. It never touches their **ceiling**, which is a measurement of the person rather than a decision about the piece, so switching mode cannot throw a calibration away.
+
+**Where the controls are.** Each person's **alpha controls** sit at the top of their column, directly above their detector lane and their graph — that is what you watch and adjust, so it is not buried under the waveform. The panel shows, left to right:
+
+| | |
+|---|---|
+| `4.2 dB now` with a dot | their live prominence, green when they are in alpha |
+| `+1.2 over` / `0.8 to go` | how far they are from turning on — the number you are really acting on |
+| `eyes open` / `eyes closed` | the mode |
+| `on 3.0` with **−** and **+** | the entry level, nudged 0.5 dB at a time |
+| `off 0.0 dB` | the exit level, which always follows 3 dB below |
+| **Reset** | back to whatever their mode implies |
+
+A line underneath says whether those levels came from that person's own 15 s check or are still the mode defaults.
+
+**And you can drag the line.** The green on-line in the detector lane is draggable — there is a grab handle on its right-hand end, and the lane grows taller when it is draggable so the drag is not fiddly. The lane already draws the line against that person's live prominence, so the quickest honest way to make a weak signal reach the piece is to put the line just under where their peaks actually get to and watch the result. Everything updates as you drag: the lane, the panel and what is sent to TouchDesigner.
+
+Three routes to the same number, on purpose: the **mode** buttons for the usual two cases, the **arrows** for a definite step, the **drag** when you want it against what you can see. The last thing you do wins, and `?enter=` in the address overrides all of it — with it set, the controls are shown but disabled and say so.
+
+### Calibrate: the guided 15 second check
+
+**Press Calibrate** in the toolbar once both people are wired and their chips are showing readings. A panel appears with the line to read out, the phase that is running, and a countdown. Three phases of five seconds:
 
 1. Both sit still and comfortable, facing forward.
-2. **Eyes closed** and relaxed for 10 s — no talking, no frowning.
-3. **Eyes open** for 10 s, looking softly ahead without staring.
-4. It finishes on its own at 20 s. **Calibration done** ends it sooner and keeps what was measured; **Start over** restarts from eyes-closed; **Cancel** leaves without changing anything.
+2. **Eyes open — blink 5 times**, firmly, about one a second.
+3. **Eyes closed** and relaxed for 5 s — no talking, no frowning.
+4. **Eyes open and still** for 5 s, looking softly ahead, trying not to blink.
+5. It finishes on its own at 15 s. **Calibration done** ends it sooner and keeps what was measured; **Start over** restarts from the blinks; **Cancel** leaves without changing anything.
 
-This sets each person's own **alpha ceiling** from their eyes-closed reading, so `level` reaches 1.0 at what is strong *for them* rather than at a fixed 12 dB. Weak-alpha people are the ones it helps most: without it they may never push the visuals past the middle of their range.
+**Each phase ignores its first two seconds**, and the panel says *settling — not recording yet* while it does. The detector reports prominence over a trailing 2 s window, so a reading taken sooner than that after an instruction is partly measuring the previous phase. Dropping those is why five seconds a phase measures *better* than the ten-second version did — the earlier one put the contaminated readings into the median along with the good ones. What is left is about 23 readings a phase, against the 5 a median needs.
 
-**Press Calibrate again for every new pair.** It always re-enters the check and discards the previous pair's numbers, so people moving through the piece each get their own ceilings.
+**Why the blinks come first.** A flat electrode and a person with genuinely weak alpha look *identical* in the numbers, and that ambiguity has cost real time on this piece — an electrode reading nothing was taken for "this person has no alpha" more than once. A blink is the one signal you can **ask for** and be sure of: it is large, it is deliberate, and on a forehead or temple electrode it is unmissable. So the check opens by asking for five, and the panel says per person whether that electrode saw them:
 
-**Read the panel before you confirm.** Each person shows `closed N · open N`, the number of readings taken in each half. A person sitting at `closed 0 · open 0` is **not streaming** — their headset is the problem, not their alpha. Confirming anyway leaves that person uncalibrated on the 12 dB default, which is safe but means the check did nothing for them. A person needs at least 5 readings in each half to be trusted.
+* **blinks seen** — the electrode is picking that person up. Whatever follows means something.
+* **no blink response** — the electrode is almost certainly not making contact. Re-seat it, especially the reference and ground behind the ears, and start over. A ceiling measured through a dead electrode is a ceiling measured off noise.
+
+It is **reported, never enforced**: a person who misses the blink check still gets whatever the alpha phases measured, and the confirmation toast says `NO BLINK RESPONSE` so you know how much to believe it.
+
+**What the last two phases set.** Each person's own **entry level**, **exit level** and **alpha ceiling**, from their eyes-closed median against their eyes-open median — all three, applied to that person alone. `level` then reaches 1.0 at what is strong *for them* rather than at a fixed 12 dB, and the detector turns on at a level they actually reach. Weak-alpha people and frontal montages are what this is for: without it they may never cross the 5 dB default at all, and the piece never responds to them.
+
+The final phase is **eyes open and still** on purpose. In the old two-phase version the eyes-open half was whatever the person happened to do, blinks included, and a blink inflates prominence — so the floor was not a floor. The blinking is now over before the measurement starts.
+
+**Press Calibrate again for every new pair.** It always re-enters the check from the blinks and discards the previous pair's numbers, so people moving through the piece each get their own.
+
+**Read the panel before you confirm.** Each person shows `blink N · closed N · open N`, the readings taken in each phase. A person sitting at all zeros is **not streaming** — their headset is the problem, not their alpha. Confirming anyway leaves them uncalibrated on the 12 dB default, which is safe but means the check did nothing for them. A person needs at least 5 readings in each of the two alpha phases to be trusted; the blink phase is never required.
+
+**One person on their own calibrates fine.** The two people are measured separately all the way through, so you can calibrate one person while the other headset is off, unpaired or broken. Whoever is not sending ends on all zeros, keeps the 12 dB default and is left alone — they do not spoil the other person's ceiling, and they do not block it. This is covered by a test (`calibration.test.ts`, *one person calibrates on their own when the other device is not connected*), so it will not quietly regress. TouchDesigner is equally happy with one signal: that side's head and object respond as normal, and only `pair_level` stays at 0, which it would anyway with one person.
 
 **Skipping it is allowed.** Both people simply stay `uncalibrated` and run on the 12 dB default, exactly as before this step existed.
+
+### Reading the page: the Legend
+
+The toolbar has a **Legend** panel, closed by default. It lists every coloured mark, line and status word on the page in a table, and for each one says **what TouchDesigner does with it** — which is usually the question you actually have. Everything on the page is also hoverable: the status words carry hover cards, and each electrode chip explains its own numbers in a tooltip with its live values in them.
+
+Under each person's chips there is a **To TouchDesigner** panel. This is the fastest answer to *is this device detecting alpha, and how much?*:
+
+* `d1_level` / `d2_level` with a bar — 0 to 1, and 0 means the vote did not pass.
+* `d1_ok` / `d2_ok` — a green or red dot.
+* `d1_w` / `d2_w` — `flowing` or `stalled`.
+* **prominence**, on the same −3 to 15 dB scale as the detector lane, with tick marks for the on threshold, the off threshold, and the ceiling where `level` reaches 1. A blue bar that never reaches the green tick means the device is reading, but there is no alpha to read.
+* A sentence saying what the projection is doing with this side right now, in the same words as §6.1.
+
+If the panel's numbers are not moving, nothing on the projection is moving either, whatever the graphs above it look like.
 
 ---
 
@@ -227,8 +325,8 @@ front channels. Nothing to configure on a new laptop beyond having an output sel
 |---|---|
 | tempo, roughly 139–200 BPM | `pair_level` — it drives harder when both are in alpha |
 | snare, swing, echo, filter resonance | `pair_level` |
-| kick weight, bass level, distortion, bass EQ | person 2 (the left side) |
-| hats, how far the kick opens the bass filter, treble EQ | person 1 (the right side) |
+| kick weight, bass level, distortion, bass EQ | person 2 (the right side) |
+| hats, how far the kick opens the bass filter, treble EQ | person 1 (the left side) |
 | silence | no data: everything is muted by `stale`, so quiet means nobody is connected |
 
 **To turn the sound off**, set `/project1/filein_or_AudioLinein` **Index** back to **1**. That
@@ -264,7 +362,7 @@ Set these on the `/controls` panel before the doors open:
 
 | Slider | Show value | Range |
 |---|---|---|
-| **Hold time** | **3** s | 0–5 s; **0 forces the sync** |
+| **Hold time** | **0.2** s | 0–5 s; **0 forces the sync**. 0.2 s is about two detector hops, so *any* overlap merges — see [§6.2](#62-making-the-sync-easier-or-harder-live) |
 | **Relative alpha sync** | **0** | 0–1 |
 | **Forgiveness** | **1** s | 0–3 s |
 
@@ -290,7 +388,7 @@ Each value the app sends has one job. The page sends 10 values; five of them ste
 |---|---|
 | `d1_level`, `d2_level` (0–1) | above 0, **that person's head turns to face forward, then reaches toward the other and dips back**, further the longer and deeper they stay in. **Their object calms**. The **deeper head turns a little further** when both are in |
 | `d1_ok`, `d2_ok` (0 or 1) | at 0, **that side fades to grey** and its head turns away, so a lost signal never looks like calm |
-| `pair_level` (0–1) | above 0, **both heads turn past forward to face each other** over the 3 s ease. Held for **Hold time**, **the transition plays** |
+| `pair_level` (0–1) | above 0, **both heads turn past forward to face each other** over the 1.5 s ease. Overlap for **Hold time** (0.2 s), and **the transition plays** |
 | `d1_w`, `d2_w` (waveforms) | **the live texture and motion**: object height, noise layers and rotations, as in V15 |
 | `v`, `fs`, `n` | bookkeeping: format check, sample rate, lost-message count |
 
@@ -332,16 +430,30 @@ flowchart LR
     RE --> TG
 ```
 
-**Timing to expect.** The app needs about 1.3 s after eyes close to call alpha, and about 1.9 s after they open to drop it. Add the 3 s ease, so heads meet about 4 s after both people settle, and the transition comes Hold time later.
+**Timing to expect.** The app needs about 1.3 s after eyes close to call alpha, and about 1.9 s after they open to drop it — that is the detector's 2 s window, and it is the one delay that cannot be tuned away. After that the piece is quick.
+
+**One person in alpha, on their own.** Their head turns from away toward the front as soon as the app reports it, and it is tuned for the bursts the signal actually gives — roughly half a second to three seconds:
+
+| Their burst | What their head does |
+|---|---|
+| 0.5 s | swings the full way from turned-away to facing forward |
+| 1 s | past forward, leaning about 14° toward the other person |
+| 2–3 s | the full reach, about 18°, dipping back toward forward as it holds |
+
+It eases back out more slowly than it goes in (1.2 s against 0.25 s), so the end of a burst is a settle rather than a snap, and two bursts close together read as one gesture. Measured with `scripts/head_timing.py`, which runs the real head logic offline.
+
+**Both in alpha.** The heads turn past forward to face each other over the 1.5 s ease, and the transition fires once they have overlapped for **Hold time**, 0.2 s by default. So the merge happens on any real overlap rather than needing a sustained one.
+
+**Nothing latches.** The heads follow `together` through the ease, so they turn toward each other for as long as the overlap lasts and ease back to each person's own live state when it ends. Dropping out is not a failure and costs nothing — the pair can simply try again, as often as they like. The transition envelope does play out in full once it fires (`trigger3`: attack 1 s, decay 3 s), which is what makes a short overlap still read as a moment.
 
 ### 6.2 Making the sync easier or harder, live
 
 The old **Sync Trigger** slider is gone. In its place, in this order:
 
-1. **Lower Hold time** (3 → 2 → 1 s). The transition comes sooner after both are in.
+1. **Lower Hold time** (0.2 s by default; raise it toward 1–3 s if the merge is firing too easily for the room, or lower it to make it even more immediate).
 2. **Raise Forgiveness** (1 → 2 s). A blink or a flicker by one person no longer restarts the count.
 3. **Keep Relative alpha sync at 0.** Raising it asks for both people to be deeper together: harder, not easier.
-4. If the moment must happen: **Hold time 0** (FORCED SYNC). Remember to put it back to 3.
+4. If the moment must happen: **Hold time 0** (FORCED SYNC). Remember to put it back to 0.2.
 
 ```mermaid
 flowchart TB
@@ -383,15 +495,19 @@ Press **Record** at the start of a session and **Stop recording** at the end. Yo
 | Everything frozen, no error | did you open **V15**? `compat_info` | open V16. V15 ignores the new messages and shows nothing |
 | One side grey | that person's chips | a red chip: re-seat that electrode, or click it to exclude it. A device disconnected: reconnect |
 | Both sides grey | `WS/STATE` `stale`, `age` | stale = 1: no message for 2 s. Check the page is still open and sending |
-| A chip is red, **railed** | the electrode lost contact or saturated | re-seat, add gel; check the plug |
+| A chip is red, **railed** | the `rail … % low/high · raw a–b` line on the chip | a few percent = knocks: check the plug and the cable slack. Most of the samples = the input is pinned, and that is nearly always the **reference or ground** electrode, not this one — see the next row |
+| **Railed and high mains together**, all session | the two electrodes **behind the ears** | this pair of symptoms is one fault, not two. Mains hum is common to the whole body and the amplifier only cancels it if the reference has good contact; with a poor reference it saturates *and* the hum goes through the roof. Re-seat reference and ground first, fresh gel, pressed onto bare skin, hair moved aside — the mastoid is bone and dries out fast. Only then look at the active electrode |
 | A chip is red, **restless** | more than half of the last 10 s was disturbed | ask the person to sit still, relax the jaw |
 | A chip is red, **mains** | hum above 50 µV | re-seat electrodes; move away from power cables and chargers; unplug the laptop charger |
 | Chip says **"60 Hz?"** or **"50 Hz?"** | the notch is on the wrong mains frequency | reload with or without `?mains=50` |
-| Eyes closed but no `α` | `prom` stays below 5 dB | electrodes; stillness; then `?enter=4` ([§6.3](#63-from-the-app-the-last-resort)) |
+| Eyes closed but no `α` | `prom` stays below the green line in the detector lane | **press Calibrate** — the 15 s check sets this person's own entry level, which is what a forehead or behind-the-ear electrode needs; then stillness and contact; then `?enter=4` ([§6.3](#63-from-the-app-the-last-resort)) |
+| A chip reads **restless** all session | where that electrode actually is | the temple sits on jaw muscle and the mid-forehead sees blinks; both read as restless. Loose jaw, fewer hard blinks, or move it toward the back of the head |
+| **One chip stays restless while its neighbour recovers** | nothing — this was a bug, fixed | the artifact gate compares each electrode against its own recent amplitude, and that reference only updated on clean windows. An electrode whose reference was captured while it was flat or pinned could never produce a clean window again, so it stayed restless for the whole session while a neighbour that happened to start clean behaved normally. The gate now re-seeds its reference after holding for more than ~3 s, which is longer than it is ever meant to hold. It still cannot excuse a railing electrode: that is judged on the raw counts, separately |
+| One person is **never ok** and only one electrode looks real | is anything plugged into the other inputs? | an empty input floats and rails, and a single red included electrode holds that person at not ok all show. set **Electrodes in use** to 1 (or 2) in the Settings panel ([§1](#1-start-chords-web)) |
 | `α` with eyes open | some relaxed people do have alpha with eyes open | expected; the piece responds to alpha, not to closed eyes |
-| Heads never meet though both chips show `α` | `SY/pair_logic` `together`; `/controls` Relative alpha sync | Relative alpha sync back to 0. Each person needs `α` on at least half of their usable electrodes |
-| Heads meet but no transition | `SY/pair_logic` `held`, `hold_s` | wait Hold time; a drop longer than Forgiveness restarts the count; lower Hold time |
-| Transition plays all the time | **FORCED SYNC** on the panel | Hold time back to 3 |
+| Heads never meet though both chips show `α` | `SY/pair_logic` `together`; `/controls` Relative alpha sync | Relative alpha sync back to 0. Each person needs `α` on their reading electrode and `ok` |
+| Heads meet but no transition | `SY/pair_logic` `held`, `hold_s` | Hold time should be 0.2; a drop longer than Forgiveness restarts the count. If `together` is 1 and `held` stays 0, Hold time has been turned up |
+| Transition plays all the time | **FORCED SYNC** on the panel | Hold time back to 0.2 (not 0) |
 | A waiting head turns **away** from the other instead of toward | `SY/heads` `R_ry`, `L_ry` | the turn's sign is inferred; swap the signs of `out['R_ry']` and `out['L_ry']` in `SY/heads_callbacks` |
 | Motion stutters or jumps | `WS/eeg_meta` `lost_samples` rising; `WS/wave` info | Wi-Fi or Bluetooth drops; move closer; on one computer this should not happen. If `wave` shows a sample rate other than 125, see `TD_CHANGES.md` item 2 |
 | An object's three rotations move in step | expected with one waveform per person | add Delay CHOPs after `WS/wave_slot2` (0.33 s) and `WS/wave_slot3` (0.67 s) |
@@ -482,10 +598,18 @@ Change these on the PC, by eye, with a recording playing through `mock_sender.py
 | Chip | the small box per electrode on the Dual Alpha page showing its readings and quality |
 | Detector lane | the strip under each person's traces showing alpha strength, thresholds and the decision |
 | Forgiveness | how long a brief drop by either person is ignored before the Hold time count restarts |
-| Hold time | how long both must stay in alpha together before the transition; 0 forces it |
+| Hold time | how long both must be in alpha at the same time before the transition; 0.2 s by default, so any overlap counts. 0 forces it regardless of the data |
 | `level` | how far into alpha a person is, 0–1, scaled to them; 0 means not in alpha |
 | `ok` | 1 when a person's signal can be trusted |
 | `pair_level` | the lower of the two levels; 0 unless both are ok. "Relative alpha synchrony" |
 | Mastoid | the bone behind the ear; ground and reference sit there |
+| Mains | the hum the building's electricity induces in an electrode — 60 Hz here, 50 Hz in much of Europe and Asia. Interference, not brain activity: it is filtered out before anything is measured, and the µV figure on each chip is the best single measure of how well that electrode is sitting |
+| Notch | the filter that removes the mains hum. Set with `?mains=50` or `?mains=60`; a chip saying `50 Hz?` means it is set to the wrong one |
+| Prominence | how far the alpha peak stands above that person's own 1/f background, in dB. The blue line in the detector lane, and what `level` is derived from |
+| Ceiling | the prominence at which `level` reaches 1, measured from a person's eyes-closed phase in the 15 s check; 12 dB by default |
+| Artifact | a window too restless to trust (movement, jaw, blinks). The gate holds the previous decision and the chart shades it grey |
+| Railed | a raw count hit 0 or 4095 — the amplifier clipped, usually a loose electrode. Turns that electrode red |
+| Tension | high-frequency power: jaw, neck and forehead muscle. Not sent anywhere, but it buries the alpha peak, which is why a person who feels calm can read as no alpha |
+| Reading electrode | the positive, which the page calls O1. These headsets are one differential channel -- that electrode plus a reference and a ground -- so it alone decides whether a person is in alpha, immediately. There is no vote between electrodes |
 | Relative alpha sync | the minimum `pair_level` that counts as together; 0 = any |
 | WS, SY | short for `/project1/SYNCD/container1websocket_example` and `/project1/SYNCD` |

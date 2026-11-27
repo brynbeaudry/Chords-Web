@@ -69,13 +69,14 @@ HATON = load('break_hat_on.wav')
 HATOFF = load('break_hat_off.wav')
 SUB = load('break_sub.wav')
 REESE = load('break_reese.wav')
-LOOP = len(KICK)
 
 
 def tap(buf, pos):
-    """Read a stem at a fractional position, wrapping -- this is the speed control."""
-    i = int(pos) % LOOP
-    j = (i + 1) % LOOP
+    """Read a stem at a fractional position, wrapping on its own length -- the drums and the
+    bass are different lengths, so each wraps on itself. This is also the speed control."""
+    n = len(buf)
+    i = int(pos) % n
+    j = (i + 1) % n
     f = pos - int(pos)
     return buf[i] * (1.0 - f) + buf[j] * f
 
@@ -122,7 +123,7 @@ for n in range(total):
 
     # Only the Reese is filtered and driven. The sub goes through untouched: the moment you
     # low-pass or clip the fundamental it stops being a sub. The growl recedes as they sync.
-    r = tap(REESE, pos) * live * (0.25 + 0.55 * l2 * calm)
+    r = tap(REESE, pos) * live * (0.15 + 0.40 * l2 * calm)
     lp += a_lp * (r + res * 0.25 * (r - lp) - lp)
     growl = math.tanh(lp * drive)
     sub = tap(SUB, pos) * live * (0.30 + 0.70 * l2)
@@ -131,7 +132,7 @@ for n in range(total):
            + tap(SNARE, pos) * live * (0.30 + 0.50 * en + 0.20 * pair)
            + tap(HATON, pos) * live * (0.20 + 0.80 * l1)
            + tap(HATOFF, pos - swing_n * speed) * live * (0.10 + 0.90 * max(l1, pair))
-           + sub + growl * 0.9) * 0.22
+           + sub + growl * 0.65) * 0.22
 
     s = dry * eq_bass * 0.6 + dry * eq_treb * 0.4
     hist.append(s)

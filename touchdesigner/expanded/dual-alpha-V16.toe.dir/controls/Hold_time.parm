@@ -1,6 +1,6 @@
 ?
 label 0 "Hold time (s)"
-value0 0 3
+value0 0 0.2
 value1 0 0.5
 valuerange0h 0 5
 w 0 100

@@ -190,7 +190,10 @@ def pair_and_heads():
     check(-12 - 8 * 0.6 - 0.5 <= mn <= -10, 'one in: reach toward the other up to about -(12 + 8 x level) (min %.1f)' % mn)
     mx = max(angles[int(9 / dt):])
     check(mx > -6, 'one in: dips back toward forward between reaches (max after 9 s %.1f)' % mx)
-    check(abs(o['L_ry'] + 45) < 1e-6, 'one in: the other head stays turned away')
+    # Person 1 is the LEFT side (TD_CHANGES B6), so L_ry follows the person who is in alpha
+    # and R_ry is the one who is not. This assertion read L_ry until the sides were swapped.
+    check(abs(o['R_ry'] - 45) < 1e-6, 'one in: the other head (right, person 2) stays turned away')
+    check(o['L_ry'] > 0, 'one in: the left head (person 1) is the one that moved')
     check(abs(o['d1_calm'] - (1 - 0.7 * 0.6)) < 0.01 and o['d2_calm'] == 1.0, 'calm = 1 - 0.7 level per person')
     for i in range(int(10 / dt)):
         o = hd['step'](hs, dt, 1.0, (0.8, 0.4), (1, 1))

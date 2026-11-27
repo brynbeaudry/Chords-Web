@@ -165,7 +165,7 @@ STEMS = (
     ('dnb_hatoff', 'break_hat_off.wav',  '0.10+0.90*max(' + L1 + ',' + PR + ')'),
     ('dnb_sub',    'break_sub.wav',      '0.30+0.70*' + L2),
     # The growl recedes as they sync: that is the point.
-    ('dnb_reese',  'break_reese.wav',    '0.25+0.55*' + L2 + '*' + CALM),
+    ('dnb_reese',  'break_reese.wav',    '0.15+0.40*' + L2 + '*' + CALM),
 )
 for i, (name, wav, vol) in enumerate(STEMS):
     add(name, 'CHOP:audiofilein', (X, Y - i * 160, 130, 90), parms=[

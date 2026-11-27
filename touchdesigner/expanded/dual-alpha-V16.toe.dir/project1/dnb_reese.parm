@@ -3,6 +3,6 @@ file 0 break_reese.wav
 play 0 on
 repeat 0 on
 speed 17 1.0 1.00-0.05*op('dnb_ctl')['pair_level']
-volume 17 0.5 (1-op('dnb_ctl')['stale'])*(0.25+0.55*op('dnb_ctl')['d2_level']*(1-op('dnb_ctl')['pair_level']))
+volume 17 0.5 (1-op('dnb_ctl')['stale'])*(0.15+0.40*op('dnb_ctl')['d2_level']*(1-op('dnb_ctl')['pair_level']))
 timeslice 0 on
 ?

@@ -228,15 +228,70 @@ Per side, in degrees; positive is turned away, 0 forward, negative toward the ot
 
 **Which sign is "toward the other".** V15 mapped `filter18` 0…1 to `FrotatepositionR` 45…0 (`math15`) and `FrotatepositionL` −45…0 (`math16`): apart, the right face's `ry` is +45 and the left face's −45. The plan's "+45 = turned away" therefore means `ry = angle` on the right and `ry = −angle` on the left, so toward the other is `ry < 0` on the right and `ry > 0` on the left. `heads` outputs `R_ry = d1_angle` and `L_ry = −d2_angle`. Geometry agrees: both faces (`filein5`, `filein6`, `Face-mono2.obj`) sit at the origin in `geo6` / `geo7` with no transform; the model's vertices are centred in x (mean 0.001) and weighted to +z (mean 0.52, toward `cam1` at z = 6.3), and a positive rotation about +Y turns a +z-facing face toward +x. So at rest the right head looks right, toward its own person's object (x = +9, `transform8`), and turns left toward person 2's (x = −9) as `ry` goes negative. Person 1 drives the right face, as person 1 already drives every `R` operator. [confirm: the faces' look from the camera]
 
-- Check: 5–15 s the right face turns to forward, then leans left and back every 8 s while the left face stays at −45; 17–19 s both pass forward (right ≈ −23, left ≈ +20, the right one further because person 1 is deeper); 38–43 s the right face returns to +45.
+> **Superseded by B6 below:** person 1 now drives the **left** face. The sign reasoning above still holds — only which person feeds which side changed.
+
+- Check: 5–15 s the left face turns to forward, then leans right and back every 8 s while the right face stays at +45; 17–19 s both pass forward (left ≈ +23, right ≈ −20, the left one further because person 1 is deeper); 38–43 s the left face returns to −45.
 
 **B4. Calm per person.** `SY/math22` (person 1's object rotation, `ScolorSpeedR`) gain `op('select20')['v1']` → `op('select20')['v1'] * op('heads')['d1_calm']`; `SY/math28` (person 2, `ScolorSpeedL`) the same with `d2_calm`. `calm = 1 − 0.7 × level` (level eased over 1 s). The Math CHOP applies gain before its −1…1 → 0…1 range, so the rotation's swing narrows around the same centre: the object slows and steadies, it does not jump to a new angle.
 
-- Check: during 5–15 s the right object's three rotations swing less than the left one's.
+- Check: during 5–15 s the left object's three rotations swing less than the right one's (see B6: `math22` now reads `d2_calm`).
 
 **B5. Grey on `ok` = 0.** Add HSV Adjust TOPs `SY/okgreyR` between `bloom1` and `null15` (person 1's object, `render5` of `geo4`) and `SY/okgreyL` between `bloom2` and `null14` (person 2's, `render4` of `geo3`), with `saturationmult` = `op('heads')['d1_sat']` / `['d2_sat']`. `sat` is `ok` eased over 1 s, so a side fades to grey and back.
 
-- Check: 38–43 s the right object is grey; with the sender stopped both go grey within about 3 s.
+- Check: 38–43 s the left object is grey; with the sender stopped both go grey within about 3 s (see B6: `okgreyL` now reads `d1_sat`).
+
+**B6. Person 1 is the left side.** V15 put person 1 on the right and V16 inherited it, but in the room device 1 is the person on the operator's left, so the projection read back to front. Seven edits, all at the point where a *side* picks a *person* — nothing is renamed, so `d1_*` still means person 1 in the contract, in `eeg`, in `heads` and in every document:
+
+| Where | Was | Now |
+|---|---|---|
+| `SY/heads_callbacks` | `R_ry = d1_angle`, `L_ry = −d2_angle` | `R_ry = d2_angle`, `L_ry = −d1_angle` |
+| `SY/okgreyR` / `okgreyL` `saturationmult` | `d1_sat` / `d2_sat` | `d2_sat` / `d1_sat` |
+| `SY/math22` / `math28` gain | `d1_calm` / `d2_calm` | `d2_calm` / `d1_calm` |
+| `WS/wave_slot1`–`3` `renamefrom` | `d1_w d2_w` | `d2_w d1_w` (chan1–3 are the right side, chan4–6 the left) |
+
+Renaming the two channels at ingestion instead would have been one edit, but then every `d1_` channel inside the file would hold person 2's value. Applied by `scripts/swap_sides.py`, which asserts all eight strings before writing anything, so a half-applied run is not possible. Note that a `.text` file (a DAT's body) carries a binary header whose sixth uint32 is the body length — edit one without re-packing that and TouchDesigner reads a truncated script.
+
+- Measured on the running file, person 1 alone at `level` 0.9 with person 2 not ok: left `ry` −24.1 against right +45.0 (at rest), left `saturationmult` 0.489 against right 0.0, left object gain 3.22 against right 4.66 (full motion), and the waveform on `chan4` at 0.0118 peak with `chan1` flat at 0. Person 2 alone mirrors it exactly: right `ry` +5.0, left −45.0; right sat 0.763, left 0.0; right gain 2.34, left 4.66; `chan1` 0.0074, `chan4` 0. Zero operator errors across the file.
+- The sound does not change: it is a mono mix sent to both output channels, so it has no sides. Person 1 still drives the hats, the bass filter opening and the treble EQ.
+
+**B7. The merge happens on any overlap.** Measured on the running file, nothing happened until the two people had been in alpha together for **three continuous seconds** (`Hold time`), and the heads then needed another three to arrive (`filter18`, a 3 s gauss ease). Real alpha episodes on these montages last a few seconds, and the app cannot help: its prominence comes from a 2 s window, so a short burst is diluted and recognised about a second after it starts. The piece's whole payoff was gated behind something the signal does not reliably do.
+
+| Where | Was | Now |
+|---|---|---|
+| `/controls/Hold_time` `value0` | 3 s | **0.2 s** — about two detector hops |
+| `SY/filter18` `width` | 3 s | **1.5 s** |
+| `SY/pair_logic_callbacks` `DEFAULTS['Hold_time']` | 3.0 | 0.2 (used only when `/controls` is missing) |
+
+Applied by `scripts/faster_merge.py`, which sets the values by line pattern so it is idempotent.
+
+- **0.2 s, not 0.** `FORCE_EPS` treats Hold time at or below 0.05 as **forced sync**, which ignores the data entirely; that end stop is worth keeping as a separate thing an operator can reach for.
+- **Both numbers move together.** Hold time alone would have fired the transition while the heads were still a third of the way round, because the turn is eased over `filter18`. Matching them keeps the choreography §6.1 describes — the heads arrive, then the transition plays.
+- **Nothing latches.** The heads follow `together` through the ease, so they turn toward each other for as long as the overlap lasts and ease back to each person's live state when it ends. Dropping out is not a failure state: the pair can try again as often as they like. The transition envelope is unchanged (`trigger3`: attack 1 s, decay 3 s, sustain 0), so once it fires it plays out in full even if the overlap has already ended — which is what makes a short overlap still read as a moment.
+- Measured after the change, driving a contrived overlap into the running file: a **0.6 s** overlap takes `hold_s` to 0.483 and `held` to 1, and the transition reaches full value; a **0.25 s** overlap also fires. `Forgiveness` (1 s) keeps `together` at 1 across the end of the overlap, which is why a sub-threshold overlap still accumulates past Hold time. Zero operator errors.
+
+**B8. One person's head moves on a real alpha burst.** The solo gesture was shaped for a hold nobody produces. Alpha on these montages arrives in bursts of roughly **half a second to three seconds**, and `SY/heads` eased the turn over a 1 s time constant and then built its reach over **eight** seconds with an eight-second dip cycle — so a real burst moved the head partway and never got past "turned away", and the reach never appeared at all.
+
+| `SY/heads_callbacks` | Was | Now |
+|---|---|---|
+| `TAU_TURN` | 1.0 s, both directions | split: **`TAU_TURN_IN` 0.25 s**, **`TAU_TURN_OUT` 1.2 s** |
+| `REACH_RAMP` | 8.0 s | **1.0 s** |
+| `REACH_PERIOD` | 8.0 s | **3.0 s** |
+| `TAU_LEVEL` | 1.0 s | **0.3 s** |
+
+The ease is deliberately **asymmetric**: fast in, so half a second of alpha is a turn rather than a twitch; slow out, so the head does not snap back and chatter at the end of a burst, and two bursts close together read as one gesture instead of two flinches.
+
+Measured with `scripts/head_timing.py`, which runs the real `step()` offline at 60 fps (angles in the file's convention: +45 away, 0 forward, negative toward the other person):
+
+| Burst | Before: furthest | After: furthest | After: crosses forward |
+|---|---|---|---|
+| 0.5 s | +26.3° (18.7° of travel) | **+0.3°** (44.7° of travel) | reaches forward |
+| 1.0 s | +13.9° | **−14.1°** | yes |
+| 2.0 s | +0.0° | **−18.2°** | yes |
+| 3.0 s | −7.2° | **−18.2°**, dipping back by 3 s | yes |
+
+- Verified live after rebuilding: the new constants are in the running file, `heads` still outputs its 13 channels, zero operator errors, 60 fps.
+- **Nothing was needed on the app side.** The page already sends `d1_level` on every detector hop with no smoothing of its own; the only delay there is the detector's 2 s analysis window, which is what makes the prominence trustworthy and is not worth trading away.
+- **A measurement trap worth recording.** While investigating this, `eeg` appeared to flicker to 0 several times a second, which looked like a serious fault — `heads` resetting its time-in-alpha, the head held back. It was the test: `/dual-alpha` was open in the browser and sending its own messages (zeros, no headsets) at about 8 a second, interleaved with the mock sender's. Any two WebSocket clients overwrite the same Constant CHOP. Check `WS/eeg_meta[2]` is *not* climbing with your own sender stopped before trusting a measurement, or use `scripts/head_timing.py`, which has no TouchDesigner in the loop at all.
 
 **B6. The corner number.** `SY/text1`, a Text TOP composited into the output by `comp5`, showed the Sync Trigger value. It now shows Hold time, `str(round(op('/controls/Hold_time').par.value0.eval(), 1))`. It never shows "FORCED SYNC". [confirm: whether the number should be projected at all; set the text to empty if not]
 

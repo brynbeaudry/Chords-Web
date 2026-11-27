@@ -2,4 +2,5 @@
 chop 0 trail3
 chanscope 0 chan1
 attscope 0 "P(1)"
+startposx 0 -0.6
 ?

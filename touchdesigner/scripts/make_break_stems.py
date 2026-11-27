@@ -50,6 +50,13 @@ STEP_S = 60.0 / BPM / 4.0              # a sixteenth
 TOTAL_STEPS = STEPS_PER_BAR * BARS
 LOOP_S = TOTAL_STEPS * STEP_S
 N = int(round(LOOP_S * SR))
+# The bass gets a longer phrase than the drums. 4 is an exact multiple of 2, so it
+# loops once per two drum loops and nothing drifts out of phase.
+BASS_BARS = 4
+# Derived from N by multiplication, not rounded independently: rounding both separately gave
+# 249035 against 2 x 124518 = 249036, one sample short, which drifts a little every loop.
+assert BASS_BARS % BARS == 0, 'the bass phrase must be a whole number of drum loops'
+N_BASS = N * (BASS_BARS // BARS)
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(HERE, 'audio')
@@ -62,8 +69,18 @@ SNARE = '....X.......X..o' '....X..o....X...'
 HAT_ON  = 'X...X...X...X...' 'X...X...X...X...'
 HAT_OFF = '..o...o...o...o.' '..o...o...o...o.'
 # A four-note riff over the two bars, as (sixteenth step, Hz, seconds). A1, A1, C2, G1:
-# root, root, up a minor third, down a tone. Long enough to sustain under the break.
-BASS_NOTES = ((0, 55.00, 0.62), (10, 55.00, 0.40), (18, 65.41, 0.62), (26, 48.99, 0.46))
+# The notes are long enough to ring into each other rather than restating: a bass that
+# sustains under the break, not one that keeps re-announcing itself.
+BASS_NOTES = (
+    (0,  55.00, 0.95),   # A1  root
+    (10, 55.00, 0.70),   # A1
+    (18, 65.41, 0.95),   # C2  minor third
+    (26, 48.99, 0.80),   # G1  seventh
+    (32, 55.00, 0.95),   # A1  back to the root
+    (42, 55.00, 0.70),   # A1
+    (50, 43.65, 0.85),   # F1  the lowest note in the phrase
+    (58, 41.20, 0.62),   # E1  the dominant: this is what pulls back to A1
+)
 
 
 def env(n, attack, decay):
@@ -142,7 +159,7 @@ def sub_note(f, dur):
     """The fundamental. A sine, plus a little second harmonic so it survives small speakers,
     and a short pitch drop at the top for weight. Deliberately no higher content."""
     n = int(dur * SR)
-    e = env(n, 0.006, dur * 0.55)
+    e = env(n, 0.006, dur * 0.78)
     out = []
     ph = 0.0
     for i in range(n):
@@ -156,7 +173,7 @@ def reese_note(f, dur, detune=0.010):
     """The growl: three band-limited saws, two of them detuned, beating against each other.
     Built additively so there is nothing above 4.5 kHz to alias."""
     n = int(dur * SR)
-    e = env(n, 0.010, dur * 0.7)
+    e = env(n, 0.010, dur * 0.88)
     freqs = (f, f * (1.0 + detune), f * (1.0 - detune * 1.7))
     out = [0.0] * n
     for fi in freqs:
@@ -195,8 +212,8 @@ def highpass(x, hz, poles=2):
 
 
 def render_notes(notes, voice, **kw):
-    """Place pitched notes on the sixteenth grid, wrapping at the loop end."""
-    buf = [0.0] * N
+    """Place pitched notes on the sixteenth grid, wrapping at the end of the bass phrase."""
+    buf = [0.0] * N_BASS
     cache = {}
     for step, f, dur in notes:
         key = (f, dur)
@@ -206,7 +223,7 @@ def render_notes(notes, voice, **kw):
         start = int(round(step * STEP_S * SR))
         for i, v in enumerate(hit):
             j = start + i
-            buf[j if j < N else j - N] += v
+            buf[j if j < N_BASS else j - N_BASS] += v
     return buf
 
 
@@ -243,10 +260,12 @@ def write_wav(name, buf, peak=0.89):
         w.setsampwidth(2)
         w.setframerate(SR)
         w.writeframes(data.tobytes())
-    print('  %-20s %5.3f s  %6.1f kB  peak %.2f' % (name, N / SR, os.path.getsize(path) / 1024.0, hi * scale))
+    print('  %-20s %5.3f s  %6.1f kB  peak %.2f'
+          % (name, len(buf) / SR, os.path.getsize(path) / 1024.0, hi * scale))
 
 
-print('%g BPM, %d bars, loop %.3f s (%d frames at %d Hz)' % (BPM, BARS, LOOP_S, N, SR))
+print('%g BPM, drums %d bars (%.3f s), bass %d bars (%.3f s), %d Hz'
+      % (BPM, BARS, LOOP_S, BASS_BARS, N_BASS / SR, SR))
 write_wav('break_kick.wav', render(KICK, kick))
 write_wav('break_snare.wav', render(SNARE, snare))
 write_wav('break_hat_on.wav', render(HAT_ON, hat, gain_full=0.85))
@@ -255,4 +274,5 @@ write_wav('break_hat_off.wav', render(HAT_OFF, hat, gain_full=0.5, gain_ghost=0.
 # Band split: the sub keeps only the fundamental, the Reese only what sits above it.
 write_wav('break_sub.wav', lowpass(render_notes(BASS_NOTES, sub_note), 110.0))
 write_wav('break_reese.wav', highpass(render_notes(BASS_NOTES, reese_note), 95.0))
-print('all six are the same length, so they stay in phase when played together')
+print('the four drums share one length and the two bass layers share another,')
+print('and the bass phrase is an exact multiple of the drum loop, so nothing drifts')

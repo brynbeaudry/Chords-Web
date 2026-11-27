@@ -18,7 +18,7 @@
 
 STATE = '/project1/SYNCD/container1websocket_example/STATE'
 CONTROLS = '/controls/'
-DEFAULTS = {'Hold_time': 3.0, 'Relative_alpha_sync': 0.0, 'Forgiveness': 1.0}
+DEFAULTS = {'Hold_time': 0.2, 'Relative_alpha_sync': 0.0, 'Forgiveness': 1.0}
 FORCE_EPS = 0.05          # Hold time at or below this counts as 0 (slider end stop)
 MAX_DT = 0.5
 
