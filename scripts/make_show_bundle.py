@@ -2,7 +2,7 @@
 """Build one zip that makes Dual Alpha V16 runnable on a laptop that has never seen it.
 
     python3 scripts/make_show_bundle.py [out.zip]
-        # default: ../dual-alpha-v16-bundle.zip, beside the repo
+        # default: ../V16-dual-alpha.zip, beside the repo
 
 What goes in
 ------------
@@ -30,7 +30,7 @@ import zipfile
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TD_SRC = r'C:\Users\Bryn\TD'
-OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(REPO), 'dual-alpha-v16-bundle.zip')
+OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(REPO), 'V16-dual-alpha.zip')
 
 # Regenerable, and together far bigger than everything else in the bundle.
 SKIP_DIRS = {'node_modules', '.next', '.turbo', 'out', 'coverage'}
