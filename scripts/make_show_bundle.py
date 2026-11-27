@@ -6,9 +6,13 @@
 
 What goes in
 ------------
-    Chords-Web/      this repository as it stands, including .git, so the show laptop has
-                     the history and can pull later. `node_modules` and `.next` are left out:
-                     they are 640 MB of regenerable files and `npm install` rebuilds them.
+    Chords-Web/      this repository as it stands, including .git *and* `node_modules`, so
+                     the show laptop needs no `npm install` -- extract and run. `.next` is
+                     left out because `npm run dev` rebuilds it on the first request anyway.
+
+                     Shipping `node_modules` means shipping the native binaries npm picked for
+                     *this* machine, so the bundle is **Windows x64 only**. On any other
+                     platform, delete the folder and run `npm install`; SETUP.md says so.
     TD/              only the assets `dual-alpha-V16.toe` actually loads, plus the V15
                      fallback and the drum stems. The source `TD.zip` is 821 MB, almost all
                      of it Blender sources (.blend, .blend1) and unused models that the piece
@@ -32,8 +36,14 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TD_SRC = r'C:\Users\Bryn\TD'
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(REPO), 'V16-dual-alpha.zip')
 
-# Regenerable, and together far bigger than everything else in the bundle.
-SKIP_DIRS = {'node_modules', '.next', '.turbo', 'out', 'coverage'}
+# Build output and caches, pruned **at the repo root only**. `node_modules` is deliberately
+# not here: see the header.
+#
+# Matching these names at any depth is a trap, and it bit once: `out` pruned `fast-glob/out/`,
+# which is that package's own source, so the bundle extracted and then died with
+# "Cannot find module .../fast-glob/out/index.js". Package directories are named after build
+# conventions all the time, so only the top level is pruned.
+SKIP_TOP = {'.next', '.turbo', 'out', 'coverage'}
 
 # From touchdesigner/ASSETS.md: every file the show file opens from disk.
 MODELS = [
@@ -58,7 +68,7 @@ Everything the piece needs is in this zip except the two installers, which are d
 | | |
 |---|---|
 | **TouchDesigner 2025.33230** | the version this file was built against. A newer 2025 build should open it; an older one may not |
-| **Node.js 22 LTS** | `node --version` should print v22 or newer |
+| **Node.js 22 LTS** | `node --version` should print v22 or newer. The packages are already in the zip, so there is nothing to install for the app itself |
 | **Chrome** or **Edge** | the page needs Web Bluetooth, which Safari and Firefox do not have |
 
 ## 2. Put the folders somewhere
@@ -72,9 +82,12 @@ Everything the piece needs is in this zip except the two installers, which are d
 
 ```
 cd Chords-Web
-npm install          # once
 npm run dev
 ```
+
+**No `npm install` needed** — the dependencies are in the zip. That does mean the bundle is
+**Windows x64 only**, because npm's native binaries are platform-specific. On a Mac or Linux
+box, delete `Chords-Web/node_modules` and run `npm install` instead.
 
 Open **http://localhost:3000/dual-alpha** in Chrome. Use the `localhost` address, not a public
 one: the page opens a plain `ws://` socket to TouchDesigner, which a page served over https is
@@ -116,7 +129,8 @@ def main():
 
     # ── the repo ──────────────────────────────────────────────────────────────────────────
     for root, dirs, files in os.walk(REPO):
-        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        if os.path.relpath(root, REPO) == '.':
+            dirs[:] = [d for d in dirs if d not in SKIP_TOP]
         for f in files:
             src = os.path.join(root, f)
             stage_files.append((src, os.path.join('Chords-Web', os.path.relpath(src, REPO))))
@@ -147,6 +161,19 @@ def main():
             z.write(src, rel)
 
     print('wrote %s  (%.0f MB)' % (OUT, os.path.getsize(OUT) / 1e6))
+
+    # Count node_modules on disk against the zip. A bundle that is quietly short a few files
+    # extracts fine and then fails at the first import, which is a miserable thing to discover
+    # on the show laptop -- so it is checked here instead.
+    nm = os.path.join(REPO, 'node_modules')
+    if os.path.isdir(nm):
+        on_disk = sum(len(fs) for _, _, fs in os.walk(nm))
+        with zipfile.ZipFile(OUT) as z:
+            in_zip = sum(1 for n in z.namelist() if n.startswith('Chords-Web/node_modules/'))
+        print('node_modules: %d files on disk, %d in the zip%s'
+              % (on_disk, in_zip, '' if on_disk == in_zip else '   <-- MISMATCH'))
+        if on_disk != in_zip:
+            return 1
     return 0
 
 
