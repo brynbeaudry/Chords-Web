@@ -7,11 +7,19 @@
 //   ?mains=50       notch at 50 Hz instead of 60 Hz
 //   ?enter=4        enter level in dB (exit = enter - 3)
 //   ?debug=1        log every hop and message to the console
+// How strictly a signal is judged is in the Settings panel, not the address: electrodes in
+// use, whether mains pickup may reject an electrode (off by default), and the restlessness
+// limit. They apply live and are remembered on the machine. The old `?chans=`, `?mainsred=`
+// and `?artifact=` still work as a one-off override of the stored value.
 // Keys: C = eyes-closed block starts, O = eyes-open block starts, X = end of block (hand marks).
-// Calibrate runs the guided 20 s check (plan §P6, src/lib/dual-alpha/calibration.ts): 10 s eyes
-// closed then 10 s eyes open, which sets each person's own alpha ceiling. The button always
-// re-enters the check, so every new pair moving through the piece gets its own ceilings; a
-// person with too little signal simply stays uncalibrated on the 12 dB default.
+// Calibrate runs the guided 15 s check (plan §P6, src/lib/dual-alpha/calibration.ts): three
+// 5 s phases -- eyes open blinking five times, eyes closed, eyes open and still, each
+// discarding its first 2 s so the detector's trailing window clears. The blinks are a
+// liveness check -- a signal we can ask for and be sure of, so an electrode that misses them is
+// not making contact rather than reading a person with weak alpha. The two alpha phases set
+// each person's own entry level, exit level and ceiling, all three, per person, which is what a
+// montage with weak alpha needs. The button always re-enters the check, so every new pair gets
+// its own numbers; a person with too little signal stays uncalibrated on the 12 dB default.
 // /dual-stream (with V15) is the untouched fallback.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTheme } from 'next-themes';
@@ -24,12 +32,24 @@ import { DualAlphaEngine, type Slot, type TdMessageV2 } from '@/lib/dual-alpha/e
 import { DeviceChart, type HandMarkKind } from '@/lib/dual-alpha/chart';
 import { Recorder, Replayer, parseRecordingCsv, type Row } from '@/lib/dual-alpha/recorder';
 import { useDualNpg } from '@/lib/dual-alpha/useDualNpg';
-import { levelFromProm, median } from '@/components/DyadState';
+import { levelFromProm, median, setQualityLimits } from '@/components/DyadState';
+import {
+    loadSettings, saveSettings, qualityLimitsFor, DEFAULT_SETTINGS, type DualAlphaSettings,
+} from '@/lib/dual-alpha/settings';
 import { UV_PER_COUNT } from '@/lib/dual-alpha/signalChain';
 import { Calibration, type CalPhase } from '@/lib/dual-alpha/calibration';
+import {
+    thresholdsFor, HYSTERESIS_DB, DEFAULT_MODE, MIN_ENTER_DB, MAX_ENTER_DB,
+    type AlphaMode,
+} from '@/lib/dual-alpha/alphaMode';
+import AlphaControls from '@/components/dual-alpha/AlphaControls';
 import SignalChip from '@/components/dual-alpha/SignalChip';
 import DetectorLane from '@/components/dual-alpha/DetectorLane';
 import CalibrationDialog from '@/components/dual-alpha/CalibrationDialog';
+import Legend from '@/components/dual-alpha/Legend';
+import SettingsPanel from '@/components/dual-alpha/SettingsPanel';
+import TdReadout from '@/components/dual-alpha/TdReadout';
+import Hint, { Info } from '@/components/dual-alpha/Hint';
 
 const FS = 500;
 const SLOTS: Slot[] = [1, 2];
@@ -42,6 +62,8 @@ interface Config {
     mains: 50 | 60;
     enterDb: number;
     exitDb: number;
+    /** `?enter=` was given explicitly, so the eyes-open/closed mode must not override it. */
+    enterGiven: boolean;
     debug: boolean;
 }
 
@@ -51,8 +73,12 @@ function readConfig(): Config {
     const tdUrl = td ? (td.includes('://') ? td : `ws://${td}`) : 'ws://localhost:9000';
     const mains = q.get('mains') === '50' ? 50 : 60;
     const enter = Number(q.get('enter'));
-    const enterDb = Number.isFinite(enter) && enter > 0 ? enter : 5;
-    return { tdUrl, mains, enterDb, exitDb: enterDb - 3, debug: q.get('debug') === '1' };
+    const enterGiven = q.get('enter') !== null && Number.isFinite(enter) && enter > 0;
+    const enterDb = enterGiven ? enter : 5;
+    return {
+        tdUrl, mains, enterDb, exitDb: enterDb - 3, enterGiven,
+        debug: q.get('debug') === '1',
+    };
 }
 
 export default function DualAlphaPage() {
@@ -69,6 +95,8 @@ export default function DualAlphaPage() {
     const [speed, setSpeed] = useState(1);
     const [mark, setMarkState] = useState<HandMarkKind>(0);
     const [, setTick] = useState(0);
+    // Null until the first effect runs: localStorage is not there during the server render.
+    const [settings, setSettings] = useState<DualAlphaSettings | null>(null);
 
     const engineRef = useRef<DualAlphaEngine | null>(null);
     const streamerRef = useRef<WebSocketStreamer | null>(null);
@@ -85,12 +113,19 @@ export default function DualAlphaPage() {
     const cfgRef = useRef<Config | null>(null);
     const replayingRef = useRef(false);
 
-    // ─── the guided 20 s check (plan §P6) ───
+    // ─── the guided 15 s check (plan §P6) ───
     // The operator may re-enter it at any time, which is how each new pair moving through the
     // piece gets its own ceilings.
     const calRef = useRef(new Calibration());
     const [calPhase, setCalPhase] = useState<CalPhase>('idle');
     const [calElapsedS, setCalElapsedS] = useState(0);
+
+    // Per person: how they are meant to reach alpha, and therefore how low the entry
+    // threshold sits. Eyes open by default -- the piece is watched, so that is the normal
+    // case. Not persisted: it belongs to the pair in the chair.
+    const [alphaMode, setAlphaMode] = useState<Record<Slot, AlphaMode>>(
+        { 1: DEFAULT_MODE, 2: DEFAULT_MODE },
+    );
 
     // ─── per-sample path, shared by live and replay ───
     const handleSample = useCallback((slot: Slot, counter: number, raw: number[], tMs: number, live: boolean) => {
@@ -111,11 +146,19 @@ export default function DualAlphaPage() {
             const person = slot === 1 ? out.hop.dyad.d1 : out.hop.dyad.d2;
             const prev = prevOn.current[slot];
             const ceiling = engine.ceilingDb[slot] ?? engine.dyadParams.defaultCeilingDb;
+            // The same floor the detector and the vote use for this person, not the global one.
+            const floor = engine.thresholdDb[slot]?.offDb ?? c.exitDb;
+            // Only the reading electrode may show alpha, on the chip and on the graph. The
+            // other inputs share the same reference electrode and the detector is scale-free,
+            // so a faint copy of a signal containing alpha reports the same prominence as the
+            // original -- an input with no electrode of its own would paint green and mean
+            // nothing. Their traces are still drawn, for checking contact.
+            const readingCh = engine.readingChannel(slot);
             const chHops = st.map((s, i) => {
                 const r = s.reading!;
-                const on = r.isAlpha && !engine.excluded[slot].has(i);
+                const on = i === readingCh && r.isAlpha && !engine.excluded[slot].has(i);
                 const h = {
-                    level: on ? levelFromProm(r.promDb, c.exitDb, ceiling) : 0,
+                    level: on ? levelFromProm(r.promDb, floor, ceiling) : 0,
                     artifact: r.artifact,
                     railed: s.railed,
                     turnedOn: on && !prev.ch[i],
@@ -128,12 +171,15 @@ export default function DualAlphaPage() {
                 level: person.level, ok: person.ok, turnedOn: personOn && !prev.person, medianPromDb: person.medianPromDb,
             });
             prev.person = personOn;
-            // feed the 20 s check from the same hops the detector produces, so a replay
+            // feed the check from the same hops the detector produces, so a replay
             // calibrates exactly as a live session does
             const cal = calRef.current;
             if (cal.running) {
                 const iafs = st.map((s) => s.reading?.iafHz).filter((v): v is number => Number.isFinite(v));
-                cal.push(slot, person.medianPromDb, iafs.length ? median(iafs) : NaN, tMs);
+                // Any electrode still in the vote rejecting this window. During the blink
+                // phase that is the blinks landing, which is the liveness check.
+                const artifact = st.some((s, i) => !engine.excluded[slot].has(i) && s.reading?.artifact);
+                cal.push(slot, person.medianPromDb, iafs.length ? median(iafs) : NaN, tMs, artifact);
             }
             if (c.debug) {
                 console.log(`[D${slot} hop t=${(tMs / 1000).toFixed(2)}s]`, st.map((s, i) =>
@@ -166,6 +212,7 @@ export default function DualAlphaPage() {
         const c = readConfig();
         cfgRef.current = c;
         engineRef.current = new DualAlphaEngine({ fs: FS, mains: c.mains, enterDb: c.enterDb });
+        setSettings(loadSettings(window.location.search, CHANNEL_LABELS.length));
         setCfg(c);
 
         const streamer = new WebSocketStreamer();
@@ -319,6 +366,47 @@ export default function DualAlphaPage() {
         setFiles(await recorderRef.current.list());
     };
 
+    // ─── settings, applied live ───
+    // Changing these must not need a reload: a reload drops the Bluetooth connections and any
+    // calibration already done with them.
+    const autoExcluded = useRef<Record<Slot, Set<number>>>({ 1: new Set(), 2: new Set() });
+    useEffect(() => {
+        const engine = engineRef.current;
+        if (!settings || !engine) return;
+        // One place, both people: channelQuality is the only thing that decides red.
+        setQualityLimits(qualityLimitsFor(settings));
+        // Inputs with no electrode on them leave the vote. Only the ones this rule switched
+        // out are switched back in, so an electrode the operator excluded by hand stays out.
+        for (const s of SLOTS) {
+            const auto = autoExcluded.current[s];
+            for (const i of [...auto]) {
+                if (i < settings.chans) {
+                    engine.excluded[s].delete(i);
+                    auto.delete(i);
+                }
+            }
+            for (let i = settings.chans; i < CHANNEL_LABELS.length; i++) {
+                engine.excluded[s].add(i);
+                auto.add(i);
+            }
+        }
+        setTick((t) => t + 1);
+    }, [settings]);
+
+    const changeSettings = useCallback((patch: Partial<DualAlphaSettings>) => {
+        setSettings((prev) => {
+            const next = { ...(prev ?? DEFAULT_SETTINGS), ...patch };
+            saveSettings(next);
+            return next;
+        });
+    }, []);
+
+    const resetSettings = useCallback(() => {
+        setSettings({ ...DEFAULT_SETTINGS });
+        saveSettings({ ...DEFAULT_SETTINGS });
+        toast.message('Settings back to defaults');
+    }, []);
+
     // ─── calibration controls ───
     // Applying keeps each person independent: one headset being silent leaves that person on
     // the 12 dB default instead of spoiling the other's ceiling.
@@ -328,17 +416,26 @@ export default function DualAlphaPage() {
         const lines = SLOTS.map((s) => {
             const r = cal.result(s);
             if (!r) return `P${s}: too little signal — stays uncalibrated`;
-            engine.ceilingDb[s] = r.ceilingDb;
+            // The check measures a ceiling *and* an entry threshold. Both are applied: a
+            // montage with weak alpha (forehead, behind the ear) can sit entirely below the
+            // default 5 dB entry, and then the ceiling alone changes nothing. The entry level
+            // follows that person's mode, so calibrating while they are in eyes-open mode
+            // leaves them on an eyes-open threshold rather than resetting it.
+            const t = thresholdsFor(alphaMode[s], r);
+            engine.setCalibration(s, r.ceilingDb, t.onDb, t.offDb);
             const iaf = Number.isFinite(r.closedIafHz) ? `${r.closedIafHz.toFixed(0)} Hz` : 'no peak';
-            return `P${s}: ceiling ${r.ceilingDb.toFixed(1)} dB · ${iaf}`;
+            return `P${s}: on ${t.onDb.toFixed(1)} / off ${t.offDb.toFixed(1)} · ceiling ${r.ceilingDb.toFixed(1)} dB · ${iaf}`;
         });
         setTick((t) => t + 1);
         toast.success(lines.join('     '));
-    }, []);
+        // `alphaMode` is read above, so it must be a dependency: without it the callback keeps
+        // whichever mode was set when the page loaded and a check run after switching to
+        // eyes-closed would silently apply eyes-open thresholds.
+    }, [alphaMode]);
 
     const startCalibration = useCallback(() => {
         calRef.current.start(performance.now());
-        setCalPhase('closed');
+        setCalPhase('blink');          // the check now opens on the blink phase
         setCalElapsedS(0);
     }, []);
 
@@ -350,14 +447,54 @@ export default function DualAlphaPage() {
         setCalPhase('done');
     }, [applyCalibration]);
 
+    // The engine is built with the global entry level, so the default mode has to be applied
+    // once the engine exists or it would be a label with no effect. An explicit `?enter=` wins:
+    // the operator has already said what they want.
+    useEffect(() => {
+        const engine = engineRef.current;
+        if (!engine || !cfg || cfg.enterGiven) return;
+        for (const s of SLOTS) {
+            const t = thresholdsFor(alphaMode[s], calRef.current.result(s));
+            engine.setThresholds(s, t.onDb, t.offDb);
+        }
+        setTick((x) => x + 1);
+    }, [cfg, alphaMode]);
+
+    /** Mode picker: re-derive this person's thresholds, using their check if they have one. */
+    const setMode = useCallback((slot: Slot, mode: AlphaMode) => {
+        setAlphaMode((prev) => ({ ...prev, [slot]: mode }));
+        const engine = engineRef.current;
+        if (!engine) return;
+        const t = thresholdsFor(mode, calRef.current.result(slot));
+        engine.setThresholds(slot, t.onDb, t.offDb);
+        setTick((x) => x + 1);
+    }, []);
+
+    /** Dragging the on-line in the detector lane. The exit level follows below it. */
+    const setEnterDb = useCallback((slot: Slot, onDb: number) => {
+        const engine = engineRef.current;
+        if (!engine) return;
+        // Clamped here rather than in each control, so the nudge buttons, the drag and anything
+        // added later cannot walk the threshold out of the range the lane can even draw.
+        const on = Math.min(MAX_ENTER_DB, Math.max(MIN_ENTER_DB, Math.round(onDb * 10) / 10));
+        engine.setThresholds(slot, on, on - HYSTERESIS_DB);
+        setTick((x) => x + 1);
+    }, []);
+
     const closeCalibration = useCallback(() => {
         calRef.current.cancel();
         setCalPhase('idle');
     }, []);
 
-    // the countdown and the automatic closed -> open -> done advance
+    // The countdown and the automatic blink -> closed -> open -> done advance.
+    //
+    // Driven by a timer and not by the hops, so the check runs on at the right pace even while
+    // a headset is silent — otherwise a person who is not streaming would freeze the panel for
+    // the pair who are. The gate is "any phase that is not idle or done" rather than a list of
+    // the running ones: it used to be a list, and when the blink phase was added the list went
+    // stale, so the panel opened on a phase the effect did not recognise and simply sat there.
     useEffect(() => {
-        if (calPhase !== 'closed' && calPhase !== 'open') return;
+        if (calPhase === 'idle' || calPhase === 'done') return;
         const id = setInterval(() => {
             const cal = calRef.current;
             const phase = cal.tick(performance.now());
@@ -387,6 +524,7 @@ export default function DualAlphaPage() {
                 elapsedS={calElapsedS}
                 counts={{ 1: calRef.current.counts(1), 2: calRef.current.counts(2) }}
                 usable={{ 1: calRef.current.result(1) !== null, 2: calRef.current.result(2) !== null }}
+                liveness={{ 1: calRef.current.liveness(1), 2: calRef.current.liveness(2) }}
                 names={{ 1: devices[1].connected ? devices[1].name : '', 2: devices[2].connected ? devices[2].name : '' }}
                 onConfirm={confirmCalibration}
                 onRestart={startCalibration}
@@ -400,13 +538,51 @@ export default function DualAlphaPage() {
                         {devices[s].loading ? `Device ${s}…` : devices[s].connected ? `Disconnect ${s}` : `Connect device ${s}`}
                     </Button>
                 ))}
-                <span title={cfg?.tdUrl} className={`flex items-center gap-1 ${tdConnected ? 'text-green-600' : 'text-gray-400'}`}>
-                    <span className={`inline-block h-2.5 w-2.5 rounded-full ${tdConnected ? 'bg-green-500' : 'bg-gray-400'}`} />
-                    TD {tdConnected ? 'connected' : 'searching'} · {msgCount.current} sent
-                </span>
+                <Hint
+                    bare
+                    title="The link to TouchDesigner"
+                    body={<>The WebSocket at <code>{cfg?.tdUrl}</code>, and how many messages have gone down
+                        it. The count has to be climbing: while it says <i>searching</i> the projection is
+                        receiving nothing at all, however good the signal looks on this page.</>}
+                >
+                    <span className={`flex items-center gap-1 ${tdConnected ? 'text-green-600' : 'text-gray-400'}`}>
+                        <span className={`inline-block h-2.5 w-2.5 rounded-full ${tdConnected ? 'bg-green-500' : 'bg-gray-400'}`} />
+                        TD {tdConnected ? 'connected' : 'searching'} · {msgCount.current} sent
+                    </span>
+                    <Info />
+                </Hint>
+                <Hint
+                    bare
+                    title="pair_level — the synchrony value"
+                    body={<>The lower of the two levels, and 0 unless <i>both</i> sides are ok. One person
+                        alone can never raise it.
+                        <br /><br />
+                        <b>In TouchDesigner:</b> above 0 both heads turn past forward to face each other over
+                        a 3 s ease; hold it for the <i>Hold time</i> and the transition plays. It also drives
+                        tempo, snare, swing, echo and filter resonance — and the wobble and the distortion
+                        ride <code>1 − pair_level</code>, so they fall away as the two come together. Arriving
+                        is meant to sound settled, not busier.</>}
+                >
+                    <span className={engine && engine.dyad.pairLevel > 0 ? 'text-green-600' : 'text-gray-400'}>
+                        pair {(engine?.dyad.pairLevel ?? 0).toFixed(2)}
+                    </span>
+                    <Info />
+                </Hint>
                 {/* always re-enters the check, so each new pair gets its own ceilings */}
                 <Button variant="outline" className="rounded-xl" disabled={!!replay} onClick={startCalibration}
-                    title="Run the 20 s check: 10 s eyes closed, then 10 s eyes open">
+                    title={'Run the 15 s check: three 5 s phases — eyes open blinking five times,\n'
+                        + 'eyes closed, then eyes open and still.\n\n'
+                        + 'Each phase ignores its first 2 s, because the detector reports prominence over a\n'
+                        + 'trailing 2 s window and a reading taken sooner is partly measuring the previous\n'
+                        + 'phase. Only readings that really belong to a phase reach its median.\n\n'
+                        + 'The blinks are the check that the electrodes are picking each person up at all. A\n'
+                        + 'blink is large and deliberate, so an electrode that misses it is not making contact —\n'
+                        + 'which otherwise looks identical to a person with weak alpha.\n\n'
+                        + 'Each person is measured separately, so one person can be calibrated on their own —\n'
+                        + 'the other device does not have to be connected. Whoever is not sending stays on the\n'
+                        + '12 dB default and is left alone.\n\n'
+                        + 'Pressing it again always restarts the check and discards the previous pair, which is\n'
+                        + 'how you hand the piece over to the next people.'}>
                     Calibrate
                 </Button>
                 <Button className={`rounded-xl ${recording ? 'bg-red-600 hover:bg-red-500 text-white' : ''}`} onClick={toggleRecord}
@@ -438,12 +614,39 @@ export default function DualAlphaPage() {
                     <span className="text-xs text-gray-500">±{uvRange.toFixed(0)} µV (approx.)</span>
                 </label>
                 <span className="text-xs text-gray-500">
-                    notch {cfg?.mains ?? 60} Hz
+                    <Hint
+                        title="Notch — which mains frequency is being filtered out"
+                        body={<>The building&rsquo;s electricity induces a strong hum in the electrodes: 60 Hz
+                            in North America, 50 Hz in most of Europe and Asia. It is interference, not brain
+                            activity, so a notch filter removes it before anything is measured.
+                            <br /><br />
+                            This is also what the <b>mains</b> figure on each chip reports — how much of that
+                            hum the electrode is picking up, which is the best single measure of how well it
+                            is sitting. If a chip says <i>50 Hz?</i> or <i>60 Hz?</i>, the notch is set to the
+                            wrong one: reload with <code>?mains=50</code> or <code>?mains=60</code>.</>}
+                    >
+                        notch {cfg?.mains ?? 60} Hz
+                    </Hint>
                     {cfg && cfg.enterDb !== 5 && <span className="ml-1 text-amber-600">· enter {cfg.enterDb} dB / exit {cfg.exitDb} dB</span>}
+                    {/* Say so when a quality limit has been moved: otherwise a green chip in a
+                        noisy room looks like a measurement rather than a setting. */}
+                    {settings?.mainsRedEnabled && (
+                        <span className="ml-1 text-amber-600">· mains rejects over {settings.mainsRedUv} µV</span>
+                    )}
+                    {settings && settings.artifactRed !== DEFAULT_SETTINGS.artifactRed && (
+                        <span className="ml-1 text-amber-600">· restless limit {Math.round(settings.artifactRed * 100)}%</span>
+                    )}
                     {' '}· marks: <b>C</b> eyes closed, <b>O</b> eyes open, <b>X</b> end
                     {mark !== 0 && <span className={mark === 1 ? 'text-blue-600' : 'text-orange-600'}> ({mark === 1 ? 'eyes closed' : 'eyes open'} block)</span>}
                 </span>
             </div>
+
+            {settings && (
+                <SettingsPanel settings={settings} labels={CHANNEL_LABELS}
+                    onChange={changeSettings} onReset={resetSettings} />
+            )}
+
+            {cfg && <Legend enterDb={cfg.enterDb} exitDb={cfg.exitDb} mains={cfg.mains} />}
 
             {replay && (
                 <div className="flex items-center gap-3 px-3 py-1.5 bg-purple-100 dark:bg-purple-950 text-sm">
@@ -480,17 +683,109 @@ export default function DualAlphaPage() {
                                 )}
                                 {person && streaming && (
                                     <>
-                                        <span className={person.ok ? 'text-green-600' : 'text-red-600'}>{person.ok ? 'ok' : 'not ok'}</span>
-                                        <span>{person.level > 0 ? `alpha · level ${person.level.toFixed(2)}` : 'no alpha'}</span>
-                                        <span className="text-gray-500">{person.voting}/{person.usable} electrodes</span>
+                                        <Hint
+                                            bare
+                                            title={`d${slot}_ok — can this side be trusted`}
+                                            body={<>1 when the device is sending, at least one electrode is
+                                                usable, and no electrode you have left switched in is red.
+                                                <br /><br />
+                                                <b>In TouchDesigner:</b> at <i>not ok</i> this side fades to
+                                                grey and its head turns away, so a lost signal can never look
+                                                like calm — and <code>pair_level</code> is forced to 0.</>}
+                                        >
+                                            <span className={person.ok ? 'text-green-600' : 'text-red-600'}>{person.ok ? 'ok' : 'not ok'}</span>
+                                            <Info />
+                                        </Hint>
+                                        <Hint
+                                            bare
+                                            title={`d${slot}_level — how far into alpha`}
+                                            body={<>0 to 1, scaled to this person&rsquo;s own ceiling, so 1
+                                                means as strong as their own eyes-closed baseline. 0 means the
+                                                vote did not pass.
+                                                <br /><br />
+                                                <b>In TouchDesigner:</b> the head turn toward the other person,
+                                                how far their object calms, and that side&rsquo;s share of the
+                                                mix. The panel below spells out what it is doing right now.</>}
+                                        >
+                                            <span className={person.level > 0 ? 'font-medium text-green-700 dark:text-green-400' : ''}>
+                                                {person.level > 0 ? `alpha · level ${person.level.toFixed(2)}` : 'no alpha'}
+                                            </span>
+                                            <Info />
+                                        </Hint>
+                                        <Hint
+                                            bare
+                                            title="The vote"
+                                            body={<>Electrodes seeing alpha, out of the ones still usable (not
+                                                red, not switched out by you). Informational: the first usable
+                                                input is the <b>reading electrode</b> and it decides on its
+                                                own, at once — these headsets are one differential channel, so
+                                                there is nothing to vote between.
+                                                <br /><br />
+                                                <b>In TouchDesigner:</b> this is what lets the level leave 0 at
+                                                all. One noisy electrode outvoting two quiet ones is the usual
+                                                reason the piece reacts when nobody feels calm.</>}
+                                        >
+                                            <span className="text-gray-500">{person.voting}/{person.usable} electrodes</span>
+                                            <Info />
+                                        </Hint>
                                     </>
                                 )}
-                                {person && !person.calibrated && <span className="rounded bg-gray-200 dark:bg-gray-800 px-1.5 text-xs">uncalibrated</span>}
+                                {person && !person.calibrated && (
+                                    <Hint
+                                        bare
+                                        title="Uncalibrated — running on the default ceiling"
+                                        body={<>This person has not done the 15 s check, so their level is
+                                            scaled against a default ceiling of 12 dB instead of their own
+                                            eyes-closed baseline.
+                                            <br /><br />
+                                            The piece still works; it just reads a strong person as shallower
+                                            than they are and a weak one as deeper. Press <b>Calibrate</b> —
+                                            and note that it works for one person on their own, so this label
+                                            can clear on one side while the other stays uncalibrated.</>}
+                                    >
+                                        <span className="rounded bg-gray-200 dark:bg-gray-800 px-1.5 text-xs">uncalibrated</span>
+                                        <Info />
+                                    </Hint>
+                                )}
                             </div>
+
+                            <TdReadout
+                                slot={slot}
+                                person={person}
+                                streaming={streaming}
+                                ceilingDb={engine?.ceilingDb[slot]}
+                                defaultCeilingDb={engine?.dyadParams.defaultCeilingDb ?? 12}
+                                enterDb={engine?.thresholdDb[slot]?.onDb ?? cfg?.enterDb ?? 5}
+                                exitDb={engine?.thresholdDb[slot]?.offDb ?? cfg?.exitDb ?? 2}
+                                waveLabel={engine ? CHANNEL_LABELS[engine.waveChannel(slot)] : undefined}
+                            />
+                            {/* The alpha controls and the lane they act on sit above the graph:
+                                this is what the operator watches and adjusts, so it belongs at
+                                the top rather than under 38vh of waveform. */}
+                            <AlphaControls
+                                slot={slot}
+                                mode={alphaMode[slot]}
+                                onMode={(m) => setMode(slot, m)}
+                                enterDb={engine?.thresholdDb[slot]?.onDb ?? cfg?.enterDb ?? 5}
+                                exitDb={engine?.thresholdDb[slot]?.offDb ?? cfg?.exitDb ?? 2}
+                                onEnterDbChange={(db) => setEnterDb(slot, db)}
+                                onResetToMode={() => setMode(slot, alphaMode[slot])}
+                                person={person}
+                                streaming={streaming}
+                                calibrated={!!person?.calibrated}
+                                locked={cfg?.enterGiven}
+                            />
+                            {cfg && <DetectorLane chartRef={chartRefs[slot]}
+                                enterDb={engine?.thresholdDb[slot]?.onDb ?? cfg.enterDb}
+                                exitDb={engine?.thresholdDb[slot]?.offDb ?? cfg.exitDb}
+                                onEnterDbChange={cfg.enterGiven ? undefined : (db) => setEnterDb(slot, db)} />}
+
                             <div className="flex flex-wrap gap-1.5">
                                 {engine && engine.chains[slot].status.map((s, i) => (
                                     <SignalChip key={i} label={CHANNEL_LABELS[i]} status={s} mains={cfg?.mains ?? 60}
                                         excluded={engine.excluded[slot].has(i)}
+                                        reading={i === engine.readingChannel(slot)}
+                                        unwired={i >= (settings?.chans ?? CHANNEL_LABELS.length) && engine.excluded[slot].has(i)}
                                         onToggle={() => {
                                             const ex = engine.excluded[slot];
                                             if (ex.has(i)) ex.delete(i); else ex.add(i);
@@ -499,7 +794,6 @@ export default function DualAlphaPage() {
                                 ))}
                             </div>
                             <div ref={containerRefs[slot]} className="w-full h-[38vh] min-h-[220px] rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden" />
-                            {cfg && <DetectorLane chartRef={chartRefs[slot]} enterDb={cfg.enterDb} exitDb={cfg.exitDb} />}
                         </div>
                     );
                 })}

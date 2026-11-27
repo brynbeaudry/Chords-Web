@@ -101,3 +101,86 @@ function median(a: number[]): number {
     const s = [...a].sort((x, y) => x - y);
     return s[Math.floor(s.length / 2)];
 }
+
+// ── the artifact gate's amplitude baseline, and the one way it used to be inescapable ──
+
+const { win: WIN, hop: HOP, maxHoldHops: MAX_HOLD } = DEFAULT_ALPHA_PARAMS;
+
+/** Push n samples of a 10 Hz sine of the given count amplitude straight into a detector. */
+function sine(det: SpectralAlphaDetector, n: number, amp: number, from: number, raw = 2048) {
+    let last: AlphaReading | null = null;
+    for (let i = from; i < from + n; i++) {
+        const r = det.push(amp * Math.sin((2 * Math.PI * 10 * i) / FS), raw);
+        if (r) last = r;
+    }
+    return last;
+}
+
+test('a baseline seeded on a flat stretch does not trap the channel on restless forever', () => {
+    const det = new SpectralAlphaDetector(FS);
+    // The electrode is flat -- which is what a pinned one looks like -- so the window's
+    // robust deviation is about zero, and that is what the baseline gets seeded from. A
+    // mid-scale count is used so the rail test stays out of it and the baseline is isolated.
+    for (let i = 0; i < WIN + HOP; i++) det.push(0, 2048);
+
+    // Re-seated, and an ordinary signal arrives. Against a near-zero baseline every window
+    // looks like an enormous deviation.
+    const early = sine(det, HOP * 2, 40, WIN + HOP);
+    assert.ok(early);
+    assert.equal(early.artifact, true, 'the stale baseline flags this at first, as it did before');
+
+    // The watchdog re-seeds once the gate has held longer than it is ever meant to, so the
+    // channel recovers instead of reading restless for the rest of the session.
+    const later = sine(det, HOP * (MAX_HOLD + 6), 40, WIN + HOP * 3);
+    assert.ok(later);
+    assert.equal(later.artifact, false, 'must recover once the baseline is re-seeded');
+});
+
+test('the baseline watchdog never fires on a railing electrode', () => {
+    const det = new SpectralAlphaDetector(FS);
+    for (let i = 0; i < WIN + HOP; i++) det.push(0, 2048);
+    // Railing is read off the raw counts, independently of the baseline, so however long it
+    // lasts the window stays rejected and the baseline is left alone.
+    const r = sine(det, HOP * (MAX_HOLD + 10), 40, WIN + HOP, 4095);
+    assert.ok(r);
+    assert.equal(r.artifact, true, 'a railing channel must stay flagged');
+});
+
+test('a healthy channel is never flagged, however long it runs', () => {
+    const det = new SpectralAlphaDetector(FS);
+    const r = sine(det, WIN + HOP * (MAX_HOLD + 10), 40, 0);
+    assert.ok(r);
+    assert.equal(r.artifact, false);
+});
+
+
+test('the gate recovers from the slow wander a movement leaves behind', () => {
+    // This is the shape that defeated the first attempt at the watchdog. A movement leaves
+    // low-frequency wander, and the gate compares a peak deviation over the last second
+    // against a robust spread. A 0.5 Hz wander swings fully inside one second but barely
+    // changes across 64 samples, so re-seeding the baseline from the last hop's spread left
+    // `maxDev` above the threshold for ever: the gate re-seeded every few seconds and the
+    // channel still read restless for the rest of the session. Re-seeding from the spread of
+    // the same samples the peak is taken over is what makes it satisfiable.
+    const det = new SpectralAlphaDetector(FS);
+    const hp = new HighPassFilter();
+    hp.setSamplingRate(FS);
+    let last: AlphaReading | null = null;
+    let i = 0;
+    const push = (wander: number) => {
+        const v = 2048 + 40 * Math.sin((2 * Math.PI * 10 * i) / FS)
+            + wander * Math.sin((2 * Math.PI * 0.5 * i) / FS);
+        const r = det.push(hp.process(v), Math.round(Math.max(1, Math.min(4094, v))));
+        if (r) last = r;
+        i++;
+    };
+
+    for (let k = 0; k < WIN * 4; k++) push(0);               // settle the high-pass first
+    assert.equal(last!.artifact, false, 'a still signal is clean');
+
+    for (let k = 0; k < HOP * 3; k++) push(400);             // the person moves
+    assert.equal(last!.artifact, true, 'the movement is caught');
+
+    for (let k = 0; k < HOP * (MAX_HOLD + 40); k++) push(400);
+    assert.equal(last!.artifact, false, 'and the channel comes back, instead of latching');
+});

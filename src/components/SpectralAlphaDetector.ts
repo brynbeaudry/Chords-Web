@@ -49,6 +49,13 @@ export interface AlphaReading {
     slope: number;     // slope of the 1/f fit, log10 power per log10 Hz (about -1 to -2 for EEG)
 }
 
+/**
+ * Floor for the robust amplitude baseline, in raw counts. Only there to stop a degenerate
+ * seed: an electrode pinned against a rail is flat, so its MAD is ~0, and a zero baseline
+ * makes every subsequent window an artifact forever.
+ */
+const MIN_SCALE = 1.0;
+
 const EMPTY_READING: AlphaReading = { isAlpha: false, promDb: 0, iafHz: 0, artifact: false, hfDb: 0, slope: 0 };
 
 export class SpectralAlphaDetector {
@@ -70,6 +77,8 @@ export class SpectralAlphaDetector {
 
     private scale = -1;
     private readonly scaleA: number;
+    /** Consecutive artifact hops, for the baseline watchdog in evaluate(). */
+    private artRun = 0;
     private state = false;
     private cnt = 0;
     private held = 0;
@@ -102,12 +111,30 @@ export class SpectralAlphaDetector {
 
     get params(): Readonly<AlphaDetectorParams> { return this.p; }
 
+    /**
+     * Move the on/off thresholds without disturbing the spectrum history.
+     *
+     * Used to give each person the thresholds their own 20 s check measured, instead of one
+     * pair of numbers for everybody. That matters most for a montage where alpha is weak --
+     * a forehead or behind-the-ear electrode sees a smaller peak than an occipital one, and a
+     * fixed 5 dB entry can sit above everything that person produces.
+     *
+     * The hysteresis state is deliberately left alone: the next hop simply compares against
+     * the new numbers, so changing thresholds mid-session cannot by itself flip the decision
+     * without a fresh measurement behind it.
+     */
+    setThresholds(onDb: number, offDb: number): void {
+        this.p.onDb = onDb;
+        this.p.offDb = Math.min(offDb, onDb);
+    }
+
     /** Number of DFT bins evaluated per Welch segment (43 at fs = 500, seg = 500). */
     get binCount(): number { return this.freqs.length; }
 
     reset(): void {
         this.pos = this.filled = this.sinceHop = 0;
         this.scale = -1;
+        this.artRun = 0;
         this.state = false;
         this.cnt = 0;
         this.held = 0;
@@ -147,12 +174,52 @@ export class SpectralAlphaDetector {
         const lastHop = x.subarray(win - hop);
         const hopMed = median(lastHop);
         const mad = median(lastHop.map((v) => Math.abs(v - hopMed))) * 1.4826 + 1e-9;
-        if (this.scale < 0) this.scale = mad;
+        if (this.scale < 0) this.scale = Math.max(mad, MIN_SCALE);
         const winMed = median(x);
         let maxDev = 0;
-        for (let i = win >> 1; i < win; i++) maxDev = Math.max(maxDev, Math.abs(x[i] - winMed));
-        const artifact = maxDev > kArt * this.scale || rawMin <= 0 || rawMax >= 4095;
-        if (!artifact) this.scale = (1 - this.scaleA) * this.scale + this.scaleA * mad;
+        const half = win >> 1;
+        const dev = new Float32Array(win - half);
+        for (let i = half; i < win; i++) {
+            const d = Math.abs(x[i] - winMed);
+            dev[i - half] = d;
+            if (d > maxDev) maxDev = d;
+        }
+        // The robust spread of *the same samples maxDev is taken over*. The watchdog below
+        // needs this rather than `mad`: `maxDev` is a peak over the last second while `mad` is
+        // the spread of the last 64 samples, and the two are not commensurate. Low-frequency
+        // drift -- which is what body movement leaves behind -- raises the one-second peak
+        // without raising the short-term spread at all, so re-seeding from `mad` could leave
+        // maxDev > kArt * scale indefinitely: the gate re-seeded every few seconds and still
+        // never cleared. Seeding from the window's own spread makes the test satisfiable.
+        const halfMad = median(dev) * 1.4826 + 1e-9;
+        // Two independent reasons to reject a window, kept apart on purpose. Railing is read
+        // off the raw counts and has nothing to do with the baseline, so the watchdog below
+        // must not react to it: an electrode that is genuinely saturating has to stay flagged
+        // for as long as it saturates, and re-seeding during it would also be meaningless.
+        const railedNow = rawMin <= 0 || rawMax >= 4095;
+        const deviates = maxDev > kArt * this.scale;
+        const artifact = deviates || railedNow;
+        if (!artifact) {
+            this.artRun = 0;
+            this.scale = (1 - this.scaleA) * this.scale + this.scaleA * mad;
+        } else if (railedNow) {
+            // Nothing to learn from a saturated window; leave the baseline and the count alone.
+        } else if (++this.artRun > this.p.maxHoldHops) {
+            // The baseline only tracks clean windows, which is right: a reference that follows
+            // the noise cannot detect the noise. But it means a baseline captured during a
+            // flat stretch can never be escaped -- and a pinned electrode is flat, so its
+            // `mad` is almost zero, which makes every later window an artifact and the only
+            // way out a clean window that by construction can never happen. That is why one
+            // channel can sit on "restless" for a whole session while its neighbour recovers
+            // normally: the two seeded their baselines at different moments.
+            //
+            // So when the gate has held for longer than it is ever meant to, treat the
+            // baseline as wrong rather than the signal, and re-seed from what is actually
+            // arriving. This cannot whitewash a genuinely bad electrode: the rail test below
+            // is independent of `scale`, so a railing channel stays flagged either way.
+            this.scale = Math.max(halfMad, MIN_SCALE);
+            this.artRun = 0;
+        }
 
         // ── Welch power at the bins we need ──
         const nb = this.freqs.length;

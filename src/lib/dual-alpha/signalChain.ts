@@ -24,6 +24,23 @@ export interface ChannelStatus {
     mains50Uv: number;              // pickup at 50 Hz, µV, measured on hpOutput once a second
     mains60Uv: number;
     railed: boolean;                // raw count at 0 or 4095 during the last hop
+    /**
+     * How the channel is railing, measured over the last hop. `railed` on its own says only
+     * that it happened at least once, which is the same word for a single knock and for an
+     * input that is pinned flat against a rail -- and those have completely different causes.
+     *
+     *   railShare  fraction of the hop's samples sitting at a rail: a knock is a few percent,
+     *              a bad reference or ground is most of them
+     *   railSide   which rail: stuck at one end is a DC offset or a floating input; both ends
+     *              is a signal too large for the amplifier
+     *   rawMin/Max the raw 12-bit count range, so "pinned at 4095" is visible as a number
+     */
+    railShare: number;
+    railSide: '' | 'low' | 'high' | 'both';
+    rawMin: number;
+    rawMax: number;
+    /** The device did not report this channel at all (shorter sample than NUM_CHANNELS). */
+    absent: boolean;
     artifactShare: number;          // share of the last 10 s of hops with the artifact gate holding
     quality: Quality;
 }
@@ -58,6 +75,13 @@ class ChannelChain {
     mainsBuf: Float32Array;
     mainsPos = 0;
     railedHop = false;
+    // Rail detail for the hop in progress, reset each hop.
+    nHop = 0;
+    nLow = 0;
+    nHigh = 0;
+    minRaw = 4095;
+    maxRaw = 0;
+    absentHop = false;
     artHist: Uint8Array;
     artPos = 0;
     artCount = 0;
@@ -75,7 +99,11 @@ class ChannelChain {
 }
 
 function emptyStatus(): ChannelStatus {
-    return { reading: null, mains50Uv: 0, mains60Uv: 0, railed: false, artifactShare: 0, quality: 'none' };
+    return {
+        reading: null, mains50Uv: 0, mains60Uv: 0, railed: false,
+        railShare: 0, railSide: '', rawMin: 0, rawMax: 0, absent: false,
+        artifactShare: 0, quality: 'none',
+    };
 }
 
 export class SignalChain {
@@ -99,6 +127,15 @@ export class SignalChain {
     get detectorParams(): Readonly<AlphaDetectorParams> { return this.channels[0].detector.params; }
     get status(): ChannelStatus[] { return this.channels.map((c) => c.status); }
 
+    /**
+     * Give this person's electrodes their own alpha on/off thresholds (from the 20 s check).
+     * Stored in `params` as well, so a rebuild or a reset keeps them.
+     */
+    setThresholds(onDb: number, offDb: number): void {
+        this.params = { ...this.params, onDb, offDb };
+        this.channels.forEach((c) => c.detector.setThresholds(onDb, offDb));
+    }
+
     /** Rebuild every filter and detector (sampling-rate change). */
     setSamplingRate(fs: number): void {
         if (fs === this.fs) return;
@@ -118,7 +155,12 @@ export class SignalChain {
         const notchType = this.mains === 50 ? 1 : 2;
         for (let ch = 0; ch < NUM_CHANNELS; ch++) {
             const c = this.channels[ch];
-            const sample = raw[ch] ?? 0;
+            // A channel the device never sent is absent, not railed. The old code read it as
+            // `?? 0`, which is exactly the low rail, so an unreported input looked like a
+            // broken electrode for the whole session.
+            const reported = raw[ch] !== undefined && Number.isFinite(raw[ch]);
+            if (!reported) c.absentHop = true;
+            const sample = reported ? raw[ch] : 0;
             const hpOutput = c.hp.process(sample);
             filtered.push(c.notch.process(c.exg.process(hpOutput, EEG_FILTER_TYPE), notchType));
 
@@ -130,7 +172,13 @@ export class SignalChain {
                 c.status.mains60Uv = goertzelAmplitude(c.mainsBuf, 60, this.fs) * UV_PER_COUNT;
             }
 
-            if (sample <= 0 || sample >= 4095) c.railedHop = true;
+            if (reported) {
+                c.nHop++;
+                if (sample < c.minRaw) c.minRaw = sample;
+                if (sample > c.maxRaw) c.maxRaw = sample;
+                if (sample <= 0) { c.nLow++; c.railedHop = true; }
+                else if (sample >= 4095) { c.nHigh++; c.railedHop = true; }
+            }
             const r = c.detector.push(hpOutput, sample);
             readings.push(r);
             if (r) {
@@ -141,14 +189,23 @@ export class SignalChain {
                 const s = c.status;
                 s.reading = r;
                 s.railed = c.railedHop;
+                s.absent = c.absentHop;
+                s.railShare = c.nHop ? (c.nLow + c.nHigh) / c.nHop : 0;
+                s.railSide = c.nLow && c.nHigh ? 'both' : c.nLow ? 'low' : c.nHigh ? 'high' : '';
+                s.rawMin = c.nHop ? c.minRaw : 0;
+                s.rawMax = c.nHop ? c.maxRaw : 0;
                 s.artifactShare = c.artCount / c.artHist.length;
-                s.quality = channelQuality({
+                s.quality = c.absentHop ? 'none' : channelQuality({
                     hasReading: true,
                     mainsUv: Math.max(s.mains50Uv, s.mains60Uv),
                     railed: s.railed,
                     artifactShare: s.artifactShare,
                 });
                 c.railedHop = false;
+                c.absentHop = false;
+                c.nHop = c.nLow = c.nHigh = 0;
+                c.minRaw = 4095;
+                c.maxRaw = 0;
             }
         }
         return { filtered, readings, hop };

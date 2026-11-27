@@ -9,7 +9,18 @@ import { dyadState, DEFAULT_DYAD_PARAMS, type DyadParams, type DyadResult, type 
 import type { AlphaDetectorParams } from '@/components/SpectralAlphaDetector';
 
 export type Slot = 1 | 2;
-export const MAIN_CHANNEL = 1;   // Oz: channel 1 (0-based) of each headset, the waveform sent to TD
+/**
+ * The electrode whose waveform is sent to TouchDesigner as `d1_w` / `d2_w`, 0-based.
+ *
+ * The **reading electrode**, the same one that decides whether the person is in alpha
+ * (`DyadState.personState`). These headsets are one differential channel, so it is the only
+ * input carrying a real signal; sending any other would send TouchDesigner a floating wire,
+ * and every bit of the live texture over there -- the object's height, the noise layers, the
+ * colour rotations, the trail -- comes from this one waveform.
+ *
+ * Preferred, not fixed: `waveChannel()` falls back if this input is red or switched out.
+ */
+export const MAIN_CHANNEL = 0;   // O1, the positive
 export const WAVE_FS = 125;
 export const WAVE_PER_MSG = 16;
 
@@ -51,12 +62,21 @@ export class DualAlphaEngine {
     readonly excluded: Record<Slot, Set<number>> = { 1: new Set(), 2: new Set() };
     /** Personal ceilings from a 20 s check (P6); undefined = uncalibrated. */
     readonly ceilingDb: Record<Slot, number | undefined> = { 1: undefined, 2: undefined };
+    /**
+     * Personal on/off thresholds from the same check. The check always measured these; until
+     * now only the ceiling was applied and these were thrown away, which left everybody on a
+     * fixed 5 dB entry -- too high for a montage where alpha is weak, such as a forehead or
+     * behind-the-ear electrode rather than an occipital one.
+     */
+    readonly thresholdDb: Record<Slot, { onDb: number; offDb: number } | undefined> = { 1: undefined, 2: undefined };
     dyad: DyadResult;
 
     private readonly decimators: Record<Slot, WaveDecimator> = { 1: new WaveDecimator(), 2: new WaveDecimator() };
     private readonly waveQueue: Record<Slot, number[]> = { 1: [], 2: [] };
     private readonly lastWave: Record<Slot, number> = { 1: 0, 2: 0 };
     private readonly lastT: Record<Slot, number> = { 1: -Infinity, 2: -Infinity };
+    /** The electrode currently feeding the waveform, per slot. See waveChannel(). */
+    private readonly waveChan: Record<Slot, number> = { 1: MAIN_CHANNEL, 2: MAIN_CHANNEL };
     private n = 0;
 
     constructor(o: EngineOptions = {}) {
@@ -75,6 +95,7 @@ export class DualAlphaEngine {
         this.waveQueue[slot] = [];
         this.lastWave[slot] = 0;
         this.lastT[slot] = -Infinity;
+        this.waveChan[slot] = MAIN_CHANNEL;
     }
 
     /** Clear everything, including the message index. */
@@ -89,6 +110,79 @@ export class DualAlphaEngine {
     }
 
     /**
+     * Apply one person's 20 s check: their ceiling, and their own on/off thresholds.
+     *
+     * Per person, not shared. Two people on different montages -- or just two different
+     * heads -- produce different peak sizes, and one pair of global numbers has to be wrong
+     * for at least one of them.
+     */
+    setCalibration(slot: Slot, ceilingDb: number, onDb: number, offDb: number): void {
+        this.ceilingDb[slot] = ceilingDb;
+        this.setThresholds(slot, onDb, offDb);
+    }
+
+    /**
+     * Move one person's alpha thresholds without touching their ceiling.
+     *
+     * This is the operator dragging the on-line in the detector lane, or picking an
+     * eyes-open/eyes-closed mode. Separate from `setCalibration` because the ceiling is a
+     * *measurement* of that person and the thresholds are a *choice* about how easily the
+     * piece should respond: changing your mind about the second must not discard the first.
+     */
+    setThresholds(slot: Slot, onDb: number, offDb: number): void {
+        this.thresholdDb[slot] = { onDb, offDb };
+        this.chains[slot].setThresholds(onDb, offDb);
+    }
+
+    /**
+     * Which electrode's waveform goes to TouchDesigner for this device.
+     *
+     * Prefers `MAIN_CHANNEL`, then the others in order, skipping any that is red or that the
+     * operator has switched out. Only re-picks when the current choice has actually failed,
+     * which is what stops it flapping between two marginal electrodes: a switch is a step in
+     * the waveform, and a step is a visible jolt in the projection. If every electrode is
+     * red there is nothing better to send, so it keeps the preferred one.
+     */
+    /**
+     * The reading electrode: the first included, non-red input, which is the one that decides
+     * whether this person is in alpha (`DyadState.personState` uses the same rule).
+     *
+     * The UI needs this so it can show alpha state on that electrode *only*. The other inputs
+     * are not independent measurements: every channel on this board is measured against the
+     * same reference electrode, so whatever the reference picks up turns up in all of them,
+     * and an input with nothing of its own on it shows little more than that. Since the
+     * detector is scale-free -- prominence in dB over each channel's own background -- a faint
+     * copy of a signal containing alpha reports the *same* prominence as the original. That is
+     * why an input carrying no electrode can light up green.
+     */
+    readingChannel(slot: Slot): number {
+        const st = this.chains[slot].status;
+        for (let i = 0; i < st.length; i++) {
+            if (!this.excluded[slot].has(i) && st[i].quality !== 'red') return i;
+        }
+        return MAIN_CHANNEL;
+    }
+
+    /**
+     * The same idea as `readingChannel`, but with hysteresis: it keeps its current choice
+     * while that still works, because this one feeds TouchDesigner's waveform and switching
+     * input mid-stream is a step in the signal, which is a visible jolt on the projection.
+     */
+    waveChannel(slot: Slot): number {
+        const st = this.chains[slot].status;
+        const usable = (i: number) => !this.excluded[slot].has(i) && st[i].quality !== 'red';
+        if (usable(this.waveChan[slot])) return this.waveChan[slot];
+        for (let k = 0; k < st.length; k++) {
+            const i = (MAIN_CHANNEL + k) % st.length;
+            if (usable(i)) {
+                this.waveChan[slot] = i;
+                return i;
+            }
+        }
+        return this.waveChan[slot];
+    }
+
+    /**
      * Feed one sample of one device. `tMs` is the sample's time (performance.now() live,
      * the recorded time in a replay). Returns the filtered values, a hop event when the
      * detectors updated, and a message when one is due.
@@ -98,7 +192,7 @@ export class DualAlphaEngine {
         const result = this.chains[slot].ingest(raw);
 
         const q = this.waveQueue[slot];
-        const batch = this.decimators[slot].push(result.filtered[MAIN_CHANNEL]);
+        const batch = this.decimators[slot].push(result.filtered[this.waveChannel(slot)]);
         if (batch) {
             q.push(...batch.w);
             if (q.length > 3 * WAVE_PER_MSG) q.splice(0, q.length - 3 * WAVE_PER_MSG); // bound the other device's lag
@@ -122,6 +216,7 @@ export class DualAlphaEngine {
             })),
             msSinceLastSample: nowMs - this.lastT[slot],
             ceilingDb: this.ceilingDb[slot],
+            offDb: this.thresholdDb[slot]?.offDb,
         };
     }
 

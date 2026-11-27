@@ -1,31 +1,43 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { channelQuality, dyadState, personState, levelFromProm, type ChannelInput, type PersonInput } from './DyadState';
+import { channelQuality, dyadState, personState, levelFromProm, setQualityLimits, type ChannelInput, type PersonInput } from './DyadState';
 
 const ch = (isAlpha: boolean, promDb = isAlpha ? 8 : 1, extra: Partial<ChannelInput> = {}): ChannelInput =>
     ({ included: true, quality: 'green', isAlpha, promDb, ...extra });
 const person = (channels: ChannelInput[], extra: Partial<PersonInput> = {}): PersonInput =>
     ({ channels, msSinceLastSample: 10, ...extra });
 
-test('vote: 2 of 3 is in alpha, 1 of 3 is not', () => {
-    assert.equal(personState(person([ch(true), ch(true), ch(false)])).inAlpha, true);
-    assert.equal(personState(person([ch(true), ch(false), ch(false)])).inAlpha, false);
+test('the reading electrode decides on its own: no vote between electrodes', () => {
+    // One differential channel -- the positive plus a reference and a ground -- so the first
+    // included, non-red input is the only one that can say anything. It used to take half the
+    // usable electrodes to agree, which meant one real electrode beside two floating ones
+    // (one of three) sent nothing at all while showing clear alpha on the chip.
+    assert.equal(personState(person([ch(true), ch(false), ch(false)])).inAlpha, true);
+    assert.equal(personState(person([ch(false), ch(true), ch(true)])).inAlpha, false,
+        'the other inputs cannot outvote it either way');
+
+    // And it is the reading electrode's prominence that scales `level`, not a median.
+    const only = personState(person([ch(true, 7), ch(true, 13), ch(true, 13)]));
+    assert.equal(only.medianPromDb, 7);
 });
 
-test('vote: 1 of 2 and 1 of 1 usable channels are in alpha', () => {
+test('a floating input beside the reading electrode no longer costs the person', () => {
     const red = { quality: 'red' as const };
-    const excluded = { included: false };
-    // one excluded: 1 of 2
-    assert.equal(personState(person([ch(true), ch(false), ch(false, 1, excluded)])).inAlpha, true);
-    // two excluded: 1 of 1
-    const one = personState(person([ch(true), ch(true, 9, excluded), ch(false, 1, excluded)]));
-    assert.equal(one.inAlpha, true);
-    assert.equal(one.usable, 1);
-    // a red channel does not vote (and makes the person not ok)
-    const withRed = personState(person([ch(true), ch(false), ch(false, 1, red)]));
+    // Two inputs with nothing on them float and go red. That is the open wire, not the
+    // person: they must not drag the reading electrode's owner to not ok.
+    const withRed = personState(person([ch(true), ch(false, 1, red), ch(false, 1, red)]));
     assert.equal(withRed.inAlpha, true);
-    assert.equal(withRed.ok, false);
-    assert.equal(withRed.level, 0);
+    assert.equal(withRed.ok, true);
+    assert.ok(withRed.level > 0, 'and the level reaches TouchDesigner');
+    assert.equal(withRed.usable, 1);
+
+    // The reading electrode itself going red is a real fault, and still is one.
+    const readerRed = personState(person([ch(true, 8, red), ch(false), ch(false)]));
+    assert.equal(readerRed.ok, true, 'the next usable input takes over as the reader');
+    assert.equal(readerRed.inAlpha, false, 'and it is not seeing alpha');
+    const allRed = personState(person([ch(true, 8, red), ch(false, 1, red), ch(false, 1, red)]));
+    assert.equal(allRed.ok, false);
+    assert.equal(allRed.level, 0);
 });
 
 test('ok is lost when the device stops, when every channel is excluded, or when none has a reading yet', () => {
@@ -36,7 +48,7 @@ test('ok is lost when the device stops, when every channel is excluded, or when 
 });
 
 test('level: uncalibrated uses a 12 dB ceiling, calibrated uses the person ceiling, 0 when out of alpha', () => {
-    const p = [ch(true, 7), ch(true, 7), ch(false, 1)];      // median prom 7 dB
+    const p = [ch(true, 7), ch(true, 7), ch(false, 1)];      // the reader reads 7 dB
     const uncal = personState(person(p));
     assert.equal(uncal.calibrated, false);
     assert.ok(Math.abs(uncal.level - (7 - 2) / (12 - 2)) < 1e-12);
@@ -70,3 +82,33 @@ test('channel quality: mains amber above 20 µV, red above 50; railed red; artif
     assert.equal(channelQuality({ ...base, artifactShare: 0.6 }), 'red');
     assert.equal(channelQuality({ ...base, hasReading: false }), 'none');
 });
+
+test('mains can be stopped from forcing not ok, and it applies to both people alike', () => {
+    const base = { hasReading: true, mainsUv: 0, railed: false, artifactShare: 0 };
+    const noisy = { ...base, mainsUv: 120 };
+    assert.equal(channelQuality(noisy), 'red', 'the default limit rejects it');
+
+    // A room with a lot of mains pickup, where the signal is otherwise fine: without this a
+    // person showing clear alpha can never reach `ok`, so their side stays grey all show.
+    try {
+        setQualityLimits({ mainsRedUv: 0 });
+        assert.equal(channelQuality(noisy), 'amber', 'still warned, no longer rejected');
+        assert.equal(channelQuality({ ...noisy, railed: true }), 'red', 'railing still rejects');
+        assert.equal(channelQuality({ ...noisy, artifactShare: 0.9 }), 'red', 'restless still rejects');
+
+        // The limits live in one place, so a person built from these channels is ok on either
+        // side. Nothing here is per-slot.
+        const person = (mainsUv: number): PersonInput => ({
+            channels: [{ included: true, quality: channelQuality({ ...base, mainsUv }), isAlpha: true, promDb: 8 }],
+            msSinceLastSample: 0,
+        });
+        const d = dyadState(person(120), person(120));
+        assert.equal(d.d1.ok, true);
+        assert.equal(d.d2.ok, true);
+        assert.ok(d.pairLevel > 0, 'and they can still reach a pair');
+    } finally {
+        setQualityLimits({ mainsRedUv: 50, mainsAmberUv: 20, artifactShareRed: 0.5 });
+    }
+    assert.equal(channelQuality(noisy), 'red', 'the default is restored');
+});
+
